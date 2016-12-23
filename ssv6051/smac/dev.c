@@ -527,12 +527,14 @@ int ssv6xxx_set_channel(struct ssv_softc *sc, int ch)
                 printk("0xce0100a0 [%x]\n",regval);
                 printk("[%x][%x][%x]\n",vt_tbl[sh->cfg.crystal_type][chidx].rf_ctrl_N,vt_tbl[sh->cfg.crystal_type][chidx].rf_ctrl_F,vt_tbl[sh->cfg.crystal_type][chidx].rf_precision_default);
 #endif
+/*
 				dev_info(
 				    sc->dev,
 				    "Lock to channel %d ([0xce010098]=%x)!!\n",
 				    vt_tbl[sh->cfg.crystal_type][chidx]
 					.channel_id,
 				    regval);
+*/
 				sc->hw_chan = ch;
 				goto exit;
 			}

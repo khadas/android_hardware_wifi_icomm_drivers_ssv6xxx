@@ -1,6 +1,6 @@
 PLATFORMS = ssv6051
 
-KBUILD_TOP := $(PWD)/../hardware/wifi/icomm/ssv6xxx/ssv6051
+KBUILD_TOP := $(PWD)/../hardware/wifi/icomm/drivers/ssv6xxx/ssv6051
 include $(KBUILD_TOP)/$(PLATFORMS).cfg
 include $(KBUILD_TOP)/platform-config.mak
 
