@@ -2,20 +2,20 @@
  * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
  * Copyright (c) 2015 iComm Corporation
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * This program is free software: you can redistribute it and/or modify 
+ * it under the terms of the GNU General Public License as published by 
+ * the Free Software Foundation, either version 3 of the License, or 
  * (at your option) any later version.
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  
  * See the GNU General Public License for more details.
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU General Public License 
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef _SDIO_DEF_H_
-#define _SDIO_DEF_H_
+#define _SDIO_DEF_H_ 
 #include <linux/scatterlist.h>
 #define BASE_SDIO 0
 #define REG_DATA_IO_PORT_0 (BASE_SDIO + 0x00)
@@ -67,18 +67,16 @@
 #endif
 #define SDIO_DEF_FORCE_BLOCK_MODE 0
 #define MAX_SCATTER_ENTRIES_PER_REQ 8
-struct sdio_scatter_item
-{
-	u8 *buf;
-	int len;
+struct sdio_scatter_item {
+ u8 *buf;
+ int len;
 };
-struct sdio_scatter_req
-{
-	u32 req;
-	u32 len;
-	int scat_entries;
-	struct sdio_scatter_item scat_list[MAX_SCATTER_ENTRIES_PER_REQ];
-	struct scatterlist sgentries[MAX_SCATTER_ENTRIES_PER_REQ];
+struct sdio_scatter_req {
+ u32 req;
+ u32 len;
+ int scat_entries;
+ struct sdio_scatter_item scat_list[MAX_SCATTER_ENTRIES_PER_REQ];
+ struct scatterlist sgentries[MAX_SCATTER_ENTRIES_PER_REQ];
 };
 #define SDIO_READ 0x00000001
 #define SDIO_WRITE 0x00000002

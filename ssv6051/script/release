@@ -27,8 +27,8 @@ for src in $src_c $src_h; do
 	#indent -bad -bap -bbb -nbc -bbo -hnl -br -brs -c33 -cd33 -ncdb -ce -ci4 \
 	#-cli0 -d0 -di1 -nfc1 -i8 -ip0 -l80 -lp -npcs -nprs -npsl -sai \
 	#-saf -saw -ncs -nsc -sob -nfca -cp33 -ss -ts8 -il1 /tmp/pack/$src -o "$dir/$src_name"
-	clang-format-3.4 -style='{BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 8, BreakBeforeBraces: Linux, AllowShortIfStatementsOnASingleLine: false, IndentCaseLabels: false}' \
-	    /tmp/pack/$src > "$dir/$src_name"
+	#clang-format-3.4 -style='{BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 8, BreakBeforeBraces: Linux, AllowShortIfStatementsOnASingleLine: false, IndentCaseLabels: false}' /tmp/pack/$src > "$dir/$src_name"
+	cp /tmp/pack/$src "$dir/$src_name"
 	#$src | script/stripcmt > "$dir/$src_name"
 done
 

@@ -29,4 +29,5 @@ KERN_SRCS += wapi_sms4.c
 KERN_SRCS += sec_wpi.c
 KERN_SRCS += efuse.c
 KERN_SRCS += p2p.c
+KERN_SRCS += sar.c
 include $(KBUILD_TOP)/rules.mak

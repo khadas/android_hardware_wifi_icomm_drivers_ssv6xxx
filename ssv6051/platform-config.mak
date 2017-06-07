@@ -59,7 +59,7 @@ ccflags-y += -DRATE_CONTROL_REALTIME_UPDATA
 
 #######################################################
 ccflags-y += -DCONFIG_SSV6200_HAS_RX_WORKQUEUE
-ccflags-y += -DUSE_THREAD_RX
+#ccflags-y += -DUSE_THREAD_RX
 ccflags-y += -DUSE_THREAD_TX
 ccflags-y += -DENABLE_AGGREGATE_IN_TIME
 ccflags-y += -DENABLE_INCREMENTAL_AGGREGATION

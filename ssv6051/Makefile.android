@@ -1,11 +1,8 @@
 PLATFORMS =
 
 KBUILD_TOP := $(PWD)
-
-SSV_PATH=$(ANDROID_BUILD_TOP)/hardware/wifi/icomm/ssv6xxx/ssv6051/
-
-include $(SSV_PATH)/ssv6051.cfg
-include $(SSV_PATH)/platform-config.mak
+include $(KBUILD_TOP)/platforms/$(PLATFORMS).cfg
+include $(KBUILD_TOP)/platforms/platform-config.mak
 
 PWD := $(shell pwd)
 
@@ -43,6 +40,7 @@ KERN_SRCS += smac/wapi_sms4.c
 KERN_SRCS += smac/sec_wpi.c
 KERN_SRCS += smac/efuse.c
 KERN_SRCS += smac/ssv_pm.c
+KERN_SRCS += smac/sar.c
 
 ifeq ($(findstring -DCONFIG_SSV_SMARTLINK, $(ccflags-y)), -DCONFIG_SSV_SMARTLINK)
 KERN_SRCS += smac/smartlink.c
@@ -59,7 +57,7 @@ KERN_SRCS_S += crypto/sha1-armv4-large.S
 endif
 
 
-KERN_SRCS += ssv6051-generic-wlan.c
+KERN_SRCS += platforms/$(PLATFORMS)-generic-wlan.c
 
 $(KMODULE_NAME)-y += $(KERN_SRCS_S:.S=.o)
 $(KMODULE_NAME)-y += $(KERN_SRCS:.c=.o)
@@ -94,4 +92,4 @@ endif
 clean:
 	make -C $(SSV_KERNEL_PATH) ARCH=$(SSV_ARCH) CROSS_COMPILE=$(SSV_CROSS) \
 	M=$(PWD) clean
-	rm $(DEF_PARSER_H)
+
