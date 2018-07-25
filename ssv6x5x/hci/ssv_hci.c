@@ -1120,8 +1120,9 @@ retry_read:
       SSV6XXX_ID_USB_AC_VI_OUT_QUEUE(ctrl_hci) - txq_info.txq2_size;
   hw_resource.max_tx_frame[3] =
       SSV6XXX_ID_USB_AC_VO_OUT_QUEUE(ctrl_hci) - txq_info.txq3_size;
-        if (hci_used_id != -1)
+        if (hci_used_id != -1) {
             max_count = SSV6XXX_ID_HCI_INPUT_QUEUE - hci_used_id;
+        }
             if (hw_resource.max_tx_frame[3] < 0) {
                 *err = -EIO;
                 return 0;
