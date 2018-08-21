@@ -461,7 +461,7 @@ static void _start_padpd(struct ssv_hw *sh, struct ssv6006dpd *val, int pa_band)
             rg_tx_scale = 48+(i-5)*4;
         }
         SET_RG_TX_SCALE(rg_tx_scale);
-        UDELAY(10000);
+        mdelay(10);
         SET_RG_RX_PADPD_LATCH(1);
         UDELAY(50);
         SET_RG_RX_PADPD_LATCH(0);

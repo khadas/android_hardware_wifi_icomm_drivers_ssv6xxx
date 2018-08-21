@@ -444,7 +444,7 @@ static void _turismoC_rxiq_cal(struct ssv_hw *sh)
     SET_REG(ADR_RF_D_CAL_TOP_7,
         (0x1 << RG_SPECTRUM_PWR_UPDATE_SFT) | (0x1 << RG_SPECTRUM_LO_FIX_SFT), 0,
         (RG_SPECTRUM_PWR_UPDATE_I_MSK & RG_SPECTRUM_LO_FIX_I_MSK));
-    UDELAY(10000);
+    mdelay(10);
     SET_REG(ADR_RF_D_CAL_TOP_7,
         (0x0 << RG_SPECTRUM_PWR_UPDATE_SFT) | (0x1 << RG_SPECTRUM_LO_FIX_SFT), 0,
         (RG_SPECTRUM_PWR_UPDATE_I_MSK & RG_SPECTRUM_LO_FIX_I_MSK));
@@ -461,7 +461,7 @@ static void _turismoC_rxiq_cal(struct ssv_hw *sh)
     SET_REG(ADR_RF_D_CAL_TOP_7,
         (0x1 << RG_SPECTRUM_PWR_UPDATE_SFT) | (0x1 << RG_SPECTRUM_LO_FIX_SFT), 0,
         (RG_SPECTRUM_PWR_UPDATE_I_MSK & RG_SPECTRUM_LO_FIX_I_MSK));
-    UDELAY(10000);
+    mdelay(10);
     SET_REG(ADR_RF_D_CAL_TOP_7,
         (0x0 << RG_SPECTRUM_PWR_UPDATE_SFT) | (0x1 << RG_SPECTRUM_LO_FIX_SFT), 0,
         (RG_SPECTRUM_PWR_UPDATE_I_MSK & RG_SPECTRUM_LO_FIX_I_MSK));
@@ -609,7 +609,7 @@ static void _turismoC_5g_rxiq_cal(struct ssv_hw *sh)
         SET_REG(ADR_RF_D_CAL_TOP_7,
             (0x1 << RG_SPECTRUM_PWR_UPDATE_SFT) | (0x1 << RG_SPECTRUM_LO_FIX_SFT), 0,
             (RG_SPECTRUM_PWR_UPDATE_I_MSK & RG_SPECTRUM_LO_FIX_I_MSK));
-        UDELAY(10000);
+        mdelay(10);
         SET_REG(ADR_RF_D_CAL_TOP_7,
             (0x0 << RG_SPECTRUM_PWR_UPDATE_SFT) | (0x1 << RG_SPECTRUM_LO_FIX_SFT), 0,
             (RG_SPECTRUM_PWR_UPDATE_I_MSK & RG_SPECTRUM_LO_FIX_I_MSK));
@@ -626,7 +626,7 @@ static void _turismoC_5g_rxiq_cal(struct ssv_hw *sh)
         SET_REG(ADR_RF_D_CAL_TOP_7,
             (0x1 << RG_SPECTRUM_PWR_UPDATE_SFT) | (0x1 << RG_SPECTRUM_LO_FIX_SFT), 0,
             (RG_SPECTRUM_PWR_UPDATE_I_MSK & RG_SPECTRUM_LO_FIX_I_MSK));
-        UDELAY(10000);
+        mdelay(10);
         SET_REG(ADR_RF_D_CAL_TOP_7,
             (0x0 << RG_SPECTRUM_PWR_UPDATE_SFT) | (0x1 << RG_SPECTRUM_LO_FIX_SFT), 0,
             (RG_SPECTRUM_PWR_UPDATE_I_MSK & RG_SPECTRUM_LO_FIX_I_MSK));
@@ -731,7 +731,7 @@ static void _start_padpd(struct ssv_hw *sh, struct ssv6006dpd *val, int pa_band,
             rg_tx_scale = 48+(i-5)*4;
         }
         SET_RG_TX_SCALE(rg_tx_scale);
-        UDELAY(10000);
+        mdelay(10);
         SET_RG_RX_PADPD_LATCH(1);
         UDELAY(50);
         SET_RG_RX_PADPD_LATCH(0);
