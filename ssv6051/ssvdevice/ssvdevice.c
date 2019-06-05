@@ -58,7 +58,7 @@ static char *ssv6xxx_cmd_buf;
 char *ssv6xxx_result_buf;
 extern struct ssv6xxx_cfg_cmd_table cfg_cmds[];
 extern struct ssv6xxx_cfg ssv_cfg;
-char DEFAULT_CFG_PATH[] = "/system/etc/firmware/ssv6051-wifi.cfg";
+char DEFAULT_CFG_PATH[] = "/system/etc/wifi/ssv6051/ssv6051-wifi.cfg";
 static int ssv6xxx_dbg_open(struct inode *inode, struct file *filp)
 {
     filp->private_data = inode->i_private;
@@ -156,12 +156,16 @@ void sta_cfg_set(char *stacfgpath)
  char buf[MAX_CHARS_PER_LINE], cfg_cmd[32], cfg_value[32];
  mm_segment_t fs;
  size_t s, read_len = 0, is_cmd_support = 0;
+ u32 sdio_defaut_timing = 3;
+
  printk("\n*** %s, %s ***\n\n", __func__, stacfgpath);
     if (stacfgpath == NULL) {
         stacfgpath = DEFAULT_CFG_PATH;
         printk("redirect to %s\n", stacfgpath);
     }
  memset(&ssv_cfg, 0, sizeof(ssv_cfg));
+ ssv_cfg.sdio_output_timing = sdio_defaut_timing;
+
  memset(buf, 0, sizeof(buf));
  fp = filp_open(stacfgpath, O_RDONLY, 0);
  if (IS_ERR(fp) || fp == NULL) {
@@ -202,6 +206,8 @@ void sta_cfg_set(char *stacfgpath)
   }
  } while (read_len > 0);
  filp_close(fp, NULL);
+ if(ssv_cfg.sdio_output_timing < 0 || ssv_cfg.sdio_output_timing > 3)
+     ssv_cfg.sdio_output_timing = sdio_defaut_timing;
 }
 static struct file_operations ssv6xxx_dbg_fops = {
     .owner = THIS_MODULE,

@@ -66,6 +66,18 @@
 #define SSV6200_TX_PKT_RSVD SSV6200_TX_PKT_RSVD_SETTING*16
 #define SSV6200_ALLOC_RSVD TXPB_OFFSET+SSV6200_TX_PKT_RSVD
 #define SSV62XX_TX_MAX_RATES 3
+enum ssv6xxx_sr_bhvr {
+    SUSPEND_RESUME_0,
+    SUSPEND_RESUME_1,
+    SUSPEND_RESUME_MAX
+};
+
+enum ssv6xxx_reboot_bhvr {
+		SSV_SYS_REBOOT = 1,
+		SSV_SYS_HALF,
+		SSV_SYS_POWER_OFF
+};
+
 struct fw_rc_retry_params {
     u32 count:4;
     u32 drate:6;
@@ -428,6 +440,7 @@ struct SKB_info_st
 #ifdef MULTI_THREAD_ENCRYPT
     volatile u8 crypt_st;
 #endif
+	bool directly_ack;
 };
 typedef struct SKB_info_st SKB_info;
 typedef struct SKB_info_st *p_SKB_info;

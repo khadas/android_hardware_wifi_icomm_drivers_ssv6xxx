@@ -21,6 +21,7 @@
 #include <linux/jiffies.h>
 #include <ssv6200.h>
 #include "hctrl.h"
+extern void sdio_clk_always_on(void);
 MODULE_AUTHOR("iComm Semiconductor Co., Ltd");
 MODULE_DESCRIPTION("HCI driver for SSV6xxx 802.11n wireless LAN cards.");
 MODULE_SUPPORTED_DEVICE("SSV6xxx WLAN cards");
@@ -29,7 +30,11 @@ static struct ssv6xxx_hci_ctrl *ctrl_hci = NULL;
 struct sk_buff *ssv_skb_alloc(s32 len)
 {
     struct sk_buff *skb;
+#if	0
     skb = __dev_alloc_skb(len + SSV6200_ALLOC_RSVD , GFP_KERNEL);
+#else
+	skb = __dev_alloc_skb(len + SSV6200_ALLOC_RSVD , GFP_ATOMIC);
+#endif
     if (skb != NULL) {
         skb_reserve(skb, SSV_SKB_info_size);
     }
@@ -352,8 +357,12 @@ static int ssv6xxx_hci_tx_handler(void *dev, int max_count)
             ctrl_hci->read_rs1_info_fail++;
             return 0;
         }
-        BUG_ON(SSV6200_PAGE_TX_THRESHOLD < txq_info2.tx_use_page);
-        BUG_ON(SSV6200_ID_TX_THRESHOLD < txq_info2.tx_use_id);
+        //BUG_ON(SSV6200_PAGE_TX_THRESHOLD < txq_info2.tx_use_page);
+        //BUG_ON(SSV6200_ID_TX_THRESHOLD < txq_info2.tx_use_id);
+        if(SSV6200_PAGE_TX_THRESHOLD < txq_info.tx_use_page)
+            return 0;
+        if(SSV6200_ID_TX_THRESHOLD < txq_info.tx_use_page)
+            return 0;     
   hw_resource.free_tx_page =
       SSV6200_PAGE_TX_THRESHOLD - txq_info2.tx_use_page;
   hw_resource.free_tx_id = SSV6200_ID_TX_THRESHOLD - txq_info2.tx_use_id;
@@ -366,8 +375,12 @@ static int ssv6xxx_hci_tx_handler(void *dev, int max_count)
             ctrl_hci->read_rs0_info_fail++;
             return 0;
         }
-        BUG_ON(SSV6200_PAGE_TX_THRESHOLD < txq_info.tx_use_page);
-        BUG_ON(SSV6200_ID_TX_THRESHOLD < txq_info.tx_use_id);
+        //BUG_ON(SSV6200_PAGE_TX_THRESHOLD < txq_info.tx_use_page);
+        //BUG_ON(SSV6200_ID_TX_THRESHOLD < txq_info.tx_use_id);
+        if(SSV6200_PAGE_TX_THRESHOLD < txq_info.tx_use_page)
+            return 0;
+        if(SSV6200_ID_TX_THRESHOLD < txq_info.tx_use_page)
+            return 0;        
   hw_resource.free_tx_page = SSV6200_PAGE_TX_THRESHOLD - txq_info.tx_use_page;
   hw_resource.free_tx_id = SSV6200_ID_TX_THRESHOLD - txq_info.tx_use_id;
   hw_resource.max_tx_frame[0] =
@@ -413,13 +426,13 @@ void ssv6xxx_hci_tx_work(struct work_struct *work)
     }
 #endif
 }
-static u32 _do_rx (struct ssv6xxx_hci_ctrl *hctl, u32 isr_status)
+static int _do_rx (struct ssv6xxx_hci_ctrl *hctl, u32 isr_status)
 {
     #if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
     struct sk_buff_head rx_list;
     #endif
     struct sk_buff *rx_mpdu;
-    int rx_cnt, ret;
+    int rx_cnt, ret = 0;
     size_t dlen;
     u32 status = isr_status;
     #ifdef CONFIG_SSV6XXX_DEBUGFS
@@ -498,7 +511,7 @@ static u32 _do_rx (struct ssv6xxx_hci_ctrl *hctl, u32 isr_status)
     }
     #endif
     #endif
-    return status;
+    return ret;
 }
 static void ssv6xxx_hci_rx_work(struct work_struct *work)
 {
@@ -663,9 +676,9 @@ void ssv6xxx_hci_deinit_debugfs(void)
     ctrl_hci->debugfs_dir = NULL;
 }
 #endif
-static u32 _isr_do_rx (struct ssv6xxx_hci_ctrl *hctl, u32 isr_status)
+static int _isr_do_rx (struct ssv6xxx_hci_ctrl *hctl, u32 isr_status)
 {
-    u32 status;
+    int status;
     u32 before = jiffies;
 #ifdef CONFIG_IRQ_DEBUG_COUNT
     if (hctl->irq_enable)
@@ -970,6 +983,10 @@ irqreturn_t ssv6xxx_hci_isr(int irq, void *args)
         if (status & SSV6XXX_INT_RX) {
             ret = _isr_do_rx(hctl, status);
             dbg_isr_miss = false;
+            if(ret < 0) {
+                ret = IRQ_NONE;
+                break;
+			} 
         }
         if (_do_tx(hctl, status))
         {
@@ -1095,6 +1112,7 @@ static int __init ssv6xxx_hci_init(void)
 #ifdef CONFIG_SSV6200_CLI_ENABLE
     extern struct ssv6xxx_hci_ctrl *ssv_dbg_ctrl_hci;
 #endif
+    sdio_clk_always_on();
     ctrl_hci = kzalloc(sizeof(*ctrl_hci), GFP_KERNEL);
     if (ctrl_hci == NULL)
         return -ENOMEM;

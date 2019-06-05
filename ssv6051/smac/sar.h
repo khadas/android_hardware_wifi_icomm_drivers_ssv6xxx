@@ -22,7 +22,7 @@
 #define SAR_TXGAIN_INDEX    (1)
 #define THERMAL_MONITOR_TIME (10 * HZ)
 #define DEFAULT_CFG_BIN_NAME "/tmp/flash.bin"
-
+#define SEC_CFG_BIN_NAME "/system/etc/wifi/ssv6051/flash.bin"
 enum {
     SAR_LVL_LT,
     SAR_LVL_RT,

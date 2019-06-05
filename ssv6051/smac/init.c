@@ -19,7 +19,12 @@
 #include <linux/nl80211.h>
 #include <linux/kthread.h>
 #include <linux/etherdevice.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+#include <crypto/hash.h>
+#else
 #include <linux/crypto.h>
+#endif
 #include <ssv6200.h>
 #include <hci/hctrl.h>
 #include <ssv_version.h>
@@ -34,6 +39,7 @@
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
 #include "ssv_pm.h"
 #endif
+#include "linux_80211.h"
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
 #include "linux_2_6_35.h"
 #endif
@@ -74,7 +80,7 @@ ssv6xxx_iface_combinations_p2p[] = {
     (((a) & 0xff00ff00) >> 8))
 #define LONGSWAP(a) ((LBYTESWAP(a) << 16) | (LBYTESWAP(a) >> 16))
 #define CHAN2G(_freq,_idx) { \
-    .band = IEEE80211_BAND_2GHZ, \
+    .band = INDEX_80211_BAND_2GHZ, \
     .center_freq = (_freq), \
     .hw_value = (_idx), \
     .max_power = 20, \
@@ -123,6 +129,9 @@ static struct ieee80211_rate ssv6200_legacy_rates[] =
     RATE(480, 0x0d, 0),
     RATE(540, 0x0e, 0),
 };
+#ifdef CONFIG_SSV_SUPPORT_ANDROID
+extern struct ssv_softc * ssv_notify_sc;
+#endif
 #ifdef CONFIG_SSV_CABRIO_E
 struct ssv6xxx_ch_cfg ch_cfg_z[] = {
  {ADR_ABB_REGISTER_1, 0, 0x151559fc},
@@ -168,11 +177,11 @@ int ssv6xxx_do_iq_calib(struct ssv_hw *sh, struct ssv6xxx_iqk_cfg *p_cfg)
     {
     u32 timeout;
     sh->sc->iq_cali_done = IQ_CALI_RUNNING;
-    set_current_state(TASK_INTERRUPTIBLE);
+    //set_current_state(TASK_INTERRUPTIBLE);
     timeout = wait_event_interruptible_timeout(sh->sc->fw_wait_q,
-                                               sh->sc->iq_cali_done,
+                                               (sh->sc->iq_cali_done == IQ_CALI_OK),
                                                msecs_to_jiffies(500));
-    set_current_state(TASK_RUNNING);
+    //set_current_state(TASK_RUNNING);
     if (timeout == 0)
         return -ETIME;
     if (sh->sc->iq_cali_done != IQ_CALI_OK)
@@ -224,7 +233,7 @@ static void ssv6xxx_set_80211_hw_capab(struct ssv_softc *sc)
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
 #endif
     hw->rate_control_algorithm = "ssv6xxx_rate_control";
-    ht_info = &sc->sbands[IEEE80211_BAND_2GHZ].ht_cap;
+    ht_info = &sc->sbands[INDEX_80211_BAND_2GHZ].ht_cap;
     ampdu_db_log("sh->cfg.hw_caps = 0x%x\n", sh->cfg.hw_caps);
     if (sh->cfg.hw_caps & SSV6200_HW_CAP_HT) {
         if (sh->cfg.hw_caps & SSV6200_HW_CAP_AMPDU_RX)
@@ -238,8 +247,9 @@ static void ssv6xxx_set_80211_hw_capab(struct ssv_softc *sc)
 #endif
         }
         ht_info->cap = IEEE80211_HT_CAP_SM_PS;
-        if (sh->cfg.hw_caps & SSV6200_HW_CAP_GF)
+        if (sh->cfg.hw_caps & SSV6200_HW_CAP_GF){
             ht_info->cap |= IEEE80211_HT_CAP_GRN_FLD;
+	}
             ht_info->cap |= HT_CAP_RX_STBC_ONE_STREAM<<IEEE80211_HT_CAP_RX_STBC_SHIFT;
         if (sh->cfg.hw_caps & SSV6200_HT_CAP_SGI_20)
             ht_info->cap |= IEEE80211_HT_CAP_SGI_20;
@@ -292,8 +302,8 @@ static void ssv6xxx_set_80211_hw_capab(struct ssv_softc *sc)
     else
         hw->extra_tx_headroom += SSV_SKB_info_size;
     if (sh->cfg.hw_caps & SSV6200_HW_CAP_2GHZ) {
-  hw->wiphy->bands[IEEE80211_BAND_2GHZ] =
-   &sc->sbands[IEEE80211_BAND_2GHZ];
+  hw->wiphy->bands[INDEX_80211_BAND_2GHZ] =
+   &sc->sbands[INDEX_80211_BAND_2GHZ];
     }
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
     if (sh->cfg.hw_caps & SSV6200_HW_CAP_AMPDU_TX)
@@ -456,7 +466,11 @@ static void ssv6xxx_preload_sw_cipher(void)
 #ifdef USE_LOCAL_CRYPTO
     struct crypto_blkcipher *tmpblkcipher;
     struct crypto_cipher *tmpcipher;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+    struct crypto_ahash *tmphash;
+#else
     struct crypto_hash *tmphash;
+#endif
     printk("Pre-load cipher\n");
     tmpblkcipher = crypto_alloc_blkcipher("ecb(arc4)", 0, CRYPTO_ALG_ASYNC);
  if (IS_ERR(tmpblkcipher)) {
@@ -470,11 +484,19 @@ static void ssv6xxx_preload_sw_cipher(void)
  } else {
     crypto_free_cipher(tmpcipher);
  }
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+ tmphash =crypto_alloc_ahash("michael_mic", 0, CRYPTO_ALG_ASYNC);
+#else
  tmphash =crypto_alloc_hash("michael_mic", 0, CRYPTO_ALG_ASYNC);
+#endif
  if (IS_ERR(tmphash)) {
      printk(" mic hash allocate fail \n");
  } else {
-     crypto_free_hash(tmphash);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+ crypto_free_ahash(tmphash);
+#else
+ crypto_free_hash(tmphash);
+#endif
  }
 #endif
 }
@@ -489,6 +511,7 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
     mutex_init(&sc->mutex);
     mutex_init(&sc->mem_mutex);
     sc->config_wq= create_singlethread_workqueue("ssv6xxx_cong_wq");
+    sc->thermal_wq= create_singlethread_workqueue("ssv6xxx_thermal_wq");
     INIT_DELAYED_WORK(&sc->thermal_monitor_work, thermal_monitor);
     INIT_WORK(&sc->set_tim_work, ssv6200_set_tim_work);
     INIT_WORK(&sc->bcast_start_work, ssv6200_bcast_start_work);
@@ -503,7 +526,9 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
     sc->early_suspend.resume = ssv6xxx_late_resume;
     register_early_suspend(&sc->early_suspend);
 #endif
+#ifdef CONFIG_HAS_WAKELOCK
     ssv_wakelock_init(sc);
+#endif
 #endif
     sc->mac_deci_tbl = sta_deci_tbl;
     memset((void *)&sc->tx, 0, sizeof(struct ssv_tx));
@@ -533,12 +558,12 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
             kfree(sc->rx.rx_buf);
       return -ENOMEM;
         }
-  sc->sbands[IEEE80211_BAND_2GHZ].channels = channels;
-  sc->sbands[IEEE80211_BAND_2GHZ].band = IEEE80211_BAND_2GHZ;
-  sc->sbands[IEEE80211_BAND_2GHZ].n_channels =
+  sc->sbands[INDEX_80211_BAND_2GHZ].channels = channels;
+  sc->sbands[INDEX_80211_BAND_2GHZ].band = INDEX_80211_BAND_2GHZ;
+  sc->sbands[INDEX_80211_BAND_2GHZ].n_channels =
    ARRAY_SIZE(ssv6200_2ghz_chantable);
-  sc->sbands[IEEE80211_BAND_2GHZ].bitrates = ssv6200_legacy_rates;
-  sc->sbands[IEEE80211_BAND_2GHZ].n_bitrates =
+  sc->sbands[INDEX_80211_BAND_2GHZ].bitrates = ssv6200_legacy_rates;
+  sc->sbands[INDEX_80211_BAND_2GHZ].n_bitrates =
    ARRAY_SIZE(ssv6200_legacy_rates);
  }
  sc->cur_channel = NULL;
@@ -611,10 +636,37 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
     rssi_res.rssi = 0;
 #endif
     add_timer(&sc->watchdog_timeout);
-    schedule_delayed_work(&sc->thermal_monitor_work, THERMAL_MONITOR_TIME);
-    get_flash_info(sc);
+    sc->is_sar_enabled = get_flash_info(sc);
+    if (sc->is_sar_enabled){
+        queue_delayed_work(sc->thermal_wq, &sc->thermal_monitor_work, THERMAL_MONITOR_TIME);
+    }
+	sc->sc_flags |= SC_OP_DIRECTLY_ACK;
+    atomic_set(&sc->ampdu_tx_frame, 0);
+    sc->directly_ack_high_threshold = 1024;
+    sc->directly_ack_low_threshold = 64;
+	sc->force_disable_directly_ack_tx = false;
     return ret;
 }
+
+void ssv6xxx_deinit_prepare(void)
+{
+    printk("%s\n", __FUNCTION__); 
+
+#ifdef CONFIG_SSV_SUPPORT_ANDROID
+	printk("%s :ps_status = %d\n", __FUNCTION__,PWRSV_PREPARE); 
+    ssv6xxx_watchdog_controller(ssv_notify_sc->sh ,(u8)SSV6XXX_HOST_CMD_WATCHDOG_STOP);
+    ssv_notify_sc->ps_status = PWRSV_PREPARE;                                                                                                                
+	
+	while(ssv_notify_sc->bScanning == true){
+        printk("+");
+        msleep(100);    
+    }
+	printk("\n");
+#endif	
+
+}
+
+
 static int ssv6xxx_deinit_softc(struct ssv_softc *sc)
 {
     void *channels;
@@ -626,22 +678,27 @@ static int ssv6xxx_deinit_softc(struct ssv_softc *sc)
 #endif
     printk("%s():\n", __FUNCTION__);
     if (sc->sh->cfg.hw_caps & SSV6200_HW_CAP_2GHZ) {
-        channels = sc->sbands[IEEE80211_BAND_2GHZ].channels;
+        channels = sc->sbands[INDEX_80211_BAND_2GHZ].channels;
         kfree(channels);
     }
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
 #ifdef CONFIG_HAS_EARLYSUSPEND
     unregister_early_suspend(&sc->early_suspend);
 #endif
+#ifdef CONFIG_HAS_WAKELOCK
     ssv_wakelock_destroy(sc);
+#endif
 #endif
     ssv_skb_free(sc->rx.rx_buf);
     sc->rx.rx_buf = NULL;
     ssv6xxx_rate_control_unregister();
     cancel_delayed_work_sync(&sc->bcast_tx_work);
-    ssv6xxx_watchdog_controller(sc->sh ,(u8)SSV6XXX_HOST_CMD_WATCHDOG_STOP);
+    //ssv6xxx_watchdog_controller(sc->sh ,(u8)SSV6XXX_HOST_CMD_WATCHDOG_STOP);
     del_timer_sync(&sc->watchdog_timeout);
     cancel_delayed_work(&sc->thermal_monitor_work);
+    sc->ps_status = PWRSV_PREPARE;
+    flush_workqueue(sc->thermal_wq);
+    destroy_workqueue(sc->thermal_wq);
  do{
   skb = ssv6200_bcast_dequeue(&sc->bcast_txq, &remain_size);
   if(skb)
@@ -747,8 +804,10 @@ int ssv6xxx_init_mac(struct ssv_hw *sh)
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
         printk(KERN_INFO "%s: wifi Alive lock timeout after 3 secs!\n",__FUNCTION__);
         {
+#ifdef CONFIG_HAS_WAKELOCK
             ssv_wake_timeout(sc, 3);
             printk(KERN_INFO "wifi Alive lock!\n");
+#endif
         }
 #endif
 #ifdef CONFIG_SSV_HW_ENCRYPT_SW_DECRYPT
@@ -1367,6 +1426,7 @@ static void ssv6xxx_check_mac2(struct ssv_hw *sh)
 }
 static int ssv6xxx_read_configuration(struct ssv_hw *sh)
 {
+    extern u32 sdio_sr_bhvr;
     if(is_valid_ether_addr(&ssv_cfg.maddr[0][0]))
         memcpy(&sh->cfg.maddr[0][0], &ssv_cfg.maddr[0][0], ETH_ALEN);
     if(is_valid_ether_addr(&ssv_cfg.maddr[1][0])){
@@ -1412,6 +1472,8 @@ static int ssv6xxx_read_configuration(struct ssv_hw *sh)
     sh->cfg.wifi_tx_gain_level_gn = ssv_cfg.wifi_tx_gain_level_gn;
     sh->cfg.wifi_tx_gain_level_b = ssv_cfg.wifi_tx_gain_level_b;
     sh->cfg.rssi_ctl = ssv_cfg.rssi_ctl;
+    sh->cfg.sr_bhvr = ssv_cfg.sr_bhvr;
+    sdio_sr_bhvr = ssv_cfg.sr_bhvr;
     sh->cfg.force_chip_identity = ssv_cfg.force_chip_identity;
     strncpy(sh->cfg.firmware_path,ssv_cfg.firmware_path,sizeof(sh->cfg.firmware_path)-1);
     strncpy(sh->cfg.flash_bin_path, ssv_cfg.flash_bin_path,sizeof(sh->cfg.flash_bin_path) - 1);
@@ -1563,6 +1625,7 @@ int ssv6xxx_dev_remove(struct platform_device *pdev)
     struct ieee80211_hw *hw=dev_get_drvdata(&pdev->dev);
     struct ssv_softc *softc=hw->priv;
     printk("ssv6xxx_dev_remove(): pdev=%p, hw=%p\n", pdev, hw);
+
     ssv6xxx_deinit_device(softc);
     printk("ieee80211_free_hw(): \n");
     ieee80211_free_hw(hw);

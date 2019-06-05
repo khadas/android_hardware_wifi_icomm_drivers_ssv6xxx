@@ -30,7 +30,7 @@
 #define Enable_AMPDU_delay_work (1)
 #define USE_FLUSH_RETRY 
 #define USE_AMPDU_TX_STATUS_ARRAY 
-#define SSV_AMPDU_FLOW_CONTROL 
+//#define SSV_AMPDU_FLOW_CONTROL 
 #define AMPDU_CHECK_SKB_SEQNO 
 #define SSV_AMPDU_aggr_num_max MAX_AGGR_NUM
 #define SSV_AMPDU_seq_num_max (4096)

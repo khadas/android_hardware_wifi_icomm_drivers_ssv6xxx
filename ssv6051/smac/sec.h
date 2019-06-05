@@ -49,7 +49,7 @@ struct ssv_crypto_data {
     struct ssv_crypto_ops *ops;
     void *priv;
     #ifdef HAS_CRYPTO_LOCK
-    rwlock_t lock;
+    struct rw_semaphore        lock;
     #endif
 };
 struct ssv_crypto_ops *get_crypto_ccmp_ops(void);

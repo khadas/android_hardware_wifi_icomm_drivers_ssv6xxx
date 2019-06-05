@@ -233,7 +233,11 @@ struct ssv6xxx_cfg_cmd_table cfg_cmds[] = {
     { "mac_output_path", (void *)&ssv_cfg.mac_output_path[0], 0, __string2str },
     { "ignore_efuse_mac", (void *)&ssv_cfg.ignore_efuse_mac, 0, __string2u32 },
     { "mac_address_mode", (void *)&ssv_cfg.mac_address_mode, 0, __string2u32 },
+    { "sr_bhvr", (void *)&ssv_cfg.sr_bhvr, 0, __string2u32 },
     { "register", NULL, 0, __string2configuration },
+    { "sdio_output_timing", (void *)&ssv_cfg.sdio_output_timing, 0, __string2u32 },
+    { "directly_ack_low_threshold" ,(void *)&ssv_cfg.directly_ack_low_threshold, 0, __string2u32 },
+    { "directly_ack_high_threshold",(void *)&ssv_cfg.directly_ack_high_threshold, 0, __string2u32 },
     { NULL, NULL, 0, NULL },
 };
 EXPORT_SYMBOL(cfg_cmds);
@@ -254,8 +258,12 @@ static int ssv_cmd_cfg(int argc, char *argv[])
         sprintf(temp_buf, "    wifi_tx_gain_level_gn = %d\n", ssv_cfg.wifi_tx_gain_level_gn);
         strcat(ssv6xxx_result_buf, temp_buf);
         sprintf(temp_buf, "    wifi_tx_gain_level_b = %d\n", ssv_cfg.wifi_tx_gain_level_b);
-  strcat(ssv6xxx_result_buf, temp_buf);
-  sprintf(temp_buf, "    rssi_ctl = %d\n",ssv_cfg.rssi_ctl);
+        strcat(ssv6xxx_result_buf, temp_buf);
+        sprintf(temp_buf, "    rssi_ctl = %d\n",ssv_cfg.rssi_ctl);
+        strcat(ssv6xxx_result_buf, temp_buf);
+        sprintf(temp_buf, "    sr_bhvr = %d\n", ssv_cfg.sr_bhvr);
+        strcat(ssv6xxx_result_buf, temp_buf);
+        sprintf(temp_buf, "    sdio_output_timing = %d\n", ssv_cfg.sdio_output_timing);
         strcat(ssv6xxx_result_buf, temp_buf);
         sprintf(temp_buf, "    sta-mac = %02x:%02x:%02x:%02x:%02x:%02x",
             ssv_cfg.maddr[0][0], ssv_cfg.maddr[0][1], ssv_cfg.maddr[0][2],
@@ -989,9 +997,10 @@ static int ssv_cmd_mib(int argc, char *argv[])
     }else if (argc==2 && !strcmp(argv[1], "list") ) {
         addr = MIB_REG_BASE;
         for(i=0; i<120; i++, addr+=4) {
-            if(SSV_REG_READ1(ssv6xxx_debug_ifops, addr, &value));
+            if(SSV_REG_READ1(ssv6xxx_debug_ifops, addr, &value)){
             sprintf(temp_str, "%08x ", value);
             strcat(ssv6xxx_result_buf, temp_str);
+	    }
             if (((i+1)&0x07) == 0)
                 strcat(ssv6xxx_result_buf, "\n");
         }
@@ -1000,69 +1009,71 @@ static int ssv_cmd_mib(int argc, char *argv[])
     else if (argc == 2 && strcmp(argv[1], "rx")==0) {
          sprintf(temp_str, "%-10s\t\t%-10s\t\t%-10s\t\t%-10s\n","MRX_FCS_SUCC", "MRX_FCS_ERR", "MRX_ALC_FAIL", "MRX_MISS");
          strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_FCS_SUCC, &value));
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_FCS_SUCC, &value)){
             sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_FCS_ERR, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_FCS_ERR, &value)){
             sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_ALC_FAIL, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_ALC_FAIL, &value)){
             sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_MISS, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_MISS, &value)){
             sprintf(temp_str, "[%08x]\n", value);
-            strcat(ssv6xxx_result_buf, temp_str);
+            strcat(ssv6xxx_result_buf, temp_str);}
          sprintf(temp_str, "%-10s\t\t%-10s\t\t%-10s\t%-10s\n", "MRX_MB_MISS", "MRX_NIDLE_MISS", "DBG_LEN_ALC_FAIL", "DBG_LEN_CRC_FAIL");
          strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_MB_MISS, &value));
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_MB_MISS, &value)){
             sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_NIDLE_MISS, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_NIDLE_MISS, &value)){
             sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_LEN_ALC_FAIL, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_LEN_ALC_FAIL, &value)){
             sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_LEN_CRC_FAIL, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_LEN_CRC_FAIL, &value)){
             sprintf(temp_str, "[%08x]\n\n", value);
-            strcat(ssv6xxx_result_buf, temp_str);
-          strcat(ssv6xxx_result_buf, temp_str);
-          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_AMPDU_PASS, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_AMPDU_PASS, &value)){
+             sprintf(temp_str, "[%08x]\t\t", value);
+             strcat(ssv6xxx_result_buf, temp_str);}
+          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_AMPDU_FAIL, &value)){
+             sprintf(temp_str, "[%08x]\t\t", value);
+             strcat(ssv6xxx_result_buf, temp_str);}
+          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_ID_ALC_FAIL1, &value)){
              sprintf(temp_str, "[%08x]\t\t", value);
              strcat(ssv6xxx_result_buf, temp_str);
-          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_AMPDU_FAIL, &value));
-             sprintf(temp_str, "[%08x]\t\t", value);
-             strcat(ssv6xxx_result_buf, temp_str);
-          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_ID_ALC_FAIL1, &value));
-             sprintf(temp_str, "[%08x]\t\t", value);
-             strcat(ssv6xxx_result_buf, temp_str);
-          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_ID_ALC_FAIL2, &value));
+	   }
+          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_ID_ALC_FAIL2, &value)){
              sprintf(temp_str, "[%08x]\n\n", value);
              strcat(ssv6xxx_result_buf, temp_str);
+	   }
          sprintf(temp_str, "PHY B mode:\n");
          strcat(ssv6xxx_result_buf, temp_str);
          sprintf(temp_str, "%-10s\t\t%-10s\t\t%-10s\n", "CRC error","CCA","counter");
          strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0023E8, &value));
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0023E8, &value)){
             sprintf(temp_str, "[%08x]\t\t", value&0xffff);
-            strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0023EC, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0023EC, &value)){
             sprintf(temp_str, "[%08x]\t\t", (value>>16)&0xffff);
             strcat(ssv6xxx_result_buf, temp_str);
             sprintf(temp_str, "[%08x]\t\t\n\n", value&0xffff);
-            strcat(ssv6xxx_result_buf, temp_str);
+            strcat(ssv6xxx_result_buf, temp_str);}
         sprintf(temp_str, "PHY G/N mode:\n");
         strcat(ssv6xxx_result_buf, temp_str);
         sprintf(temp_str, "%-10s\t\t%-10s\t\t%-10s\n", "CRC error","CCA","counter");
         strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0043E8, &value));
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0043E8, &value)){
             sprintf(temp_str, "[%08x]\t\t", value&0xffff);
-            strcat(ssv6xxx_result_buf, temp_str);
-         if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0043EC, &value));
+            strcat(ssv6xxx_result_buf, temp_str);}
+         if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0043EC, &value)){
             sprintf(temp_str, "[%08x]\t\t", (value>>16)&0xffff);
             strcat(ssv6xxx_result_buf, temp_str);
             sprintf(temp_str, "[%08x]\t\t\n\n", value&0xffff);
             strcat(ssv6xxx_result_buf, temp_str);
+	}
     }
     else
     {
@@ -1619,6 +1630,7 @@ static int ssv_cmd_check(int argc, char *argv[])
     }
     return 0;
 }
+
 struct ssv_cmd_table cmd_table[] = {
     { "help", ssv_cmd_help, "ssv6200 command usage." },
     { "-h", ssv_cmd_help, "ssv6200 command usage." },

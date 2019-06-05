@@ -62,12 +62,10 @@ void flash_hexdump(void)
 
 static u8 get_sar_lvl(u32 sar)
 {
-
-
     static u32 prev_sar = 0;
     int i;
     u8 changed = 0x0;
-
+ 
     if (sar == prev_sar)
         return changed;
  
@@ -147,12 +145,17 @@ void thermal_monitor(struct work_struct *work)
     u32 curr_sar;
 
     u32 temp;
+    if (sc->ps_status == PWRSV_PREPARE) {
+        printk("sar PWRSV_PREPARE\n");
+        return;
+    }
+
     mutex_lock(&sc->mutex);
     SMAC_REG_READ(sc->sh, ADR_RX_11B_CCA_1, &temp);
     if (temp == RX_11B_CCA_IN_SCAN) {
         printk("in scan\n");
         mutex_unlock(&sc->mutex);
-        schedule_delayed_work(&sc->thermal_monitor_work, THERMAL_MONITOR_TIME);
+        queue_delayed_work(sc->thermal_wq, &sc->thermal_monitor_work, THERMAL_MONITOR_TIME);
         return;
     }
     SMAC_REG_READ(sc->sh, ADR_RX_ADC_REGISTER, &temp);
@@ -180,7 +183,7 @@ void thermal_monitor(struct work_struct *work)
 
     mutex_unlock(&sc->mutex);
 
-    schedule_delayed_work(&sc->thermal_monitor_work, THERMAL_MONITOR_TIME);
+    queue_delayed_work(sc->thermal_wq, &sc->thermal_monitor_work, THERMAL_MONITOR_TIME);
 }
 
 int get_flash_info(struct ssv_softc *sc)
@@ -193,15 +196,21 @@ int get_flash_info(struct ssv_softc *sc)
 
     if (sc->sh->cfg.flash_bin_path[0] != 0x00) {
         fp = filp_open(sc->sh->cfg.flash_bin_path, O_RDONLY, 0);
+		 if (IS_ERR(fp) || fp == NULL) {
+             fp = filp_open(SEC_CFG_BIN_NAME, O_RDONLY, 0);
+         }
     }
     else{
         fp = filp_open(DEFAULT_CFG_BIN_NAME, O_RDONLY, 0);
+		if (IS_ERR(fp) || fp == NULL) {
+			fp = filp_open(SEC_CFG_BIN_NAME, O_RDONLY, 0);
+		}
     }
     if (IS_ERR(fp) || fp == NULL) {
-        printk("flash_file %s not found, using default settings\n",DEFAULT_CFG_BIN_NAME);
+        printk("flash_file %s not found, disable sar\n",DEFAULT_CFG_BIN_NAME);
         //WARN_ON(1);
         ret = 0;
-        goto out;
+        return ret;
     }
 
     fs = get_fs();
@@ -211,7 +220,7 @@ int get_flash_info(struct ssv_softc *sc)
     
     filp_close(fp, NULL);
     ret = 1;
-out:
+
     flash_hexdump();
     for (i = 0; i < sar_info_size; i++) {
         sar_info[i].p = &flash_cfg.sar_rlh[i];

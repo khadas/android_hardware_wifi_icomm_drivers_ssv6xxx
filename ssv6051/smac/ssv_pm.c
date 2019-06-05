@@ -16,6 +16,7 @@
 
 #include <ssv6200.h>
 #include "dev.h"
+#include "sar.h"
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
 #ifdef CONFIG_HAS_WAKELOCK
 #include <linux/wakelock.h>
@@ -41,6 +42,10 @@ void ssv6xxx_early_suspend(void)
     struct ssv_softc *sc = ssv_notify_sc;
 #endif
     sc->ps_status = PWRSV_PREPARE;
+    if (sc->is_sar_enabled){
+        cancel_delayed_work(&sc->thermal_monitor_work);
+        flush_workqueue(sc->thermal_wq);
+    }
     printk(KERN_INFO "ssv6xxx_early_suspend\n");
     ssv6xxx_watchdog_controller(sc->sh ,(u8)SSV6XXX_HOST_CMD_WATCHDOG_STOP);
     sc->watchdog_flag = WD_SLEEP;
@@ -116,6 +121,9 @@ void ssv6xxx_late_resume(void)
         ssv6xxx_disable_ps(sc);
     else
         printk(KERN_INFO "ssv6xxx_late_resume,sc=NULL\n");
+    if (sc->is_sar_enabled) {
+        queue_delayed_work(sc->thermal_wq, &sc->thermal_monitor_work, THERMAL_MONITOR_TIME);
+    }
     ssv6xxx_watchdog_controller(sc->sh ,(u8)SSV6XXX_HOST_CMD_WATCHDOG_START);
     sc->watchdog_flag = WD_KICKED;
     printk(KERN_INFO "ssv6xxx_late_resume\n");

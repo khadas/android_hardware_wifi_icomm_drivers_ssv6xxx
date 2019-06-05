@@ -47,7 +47,8 @@ struct ssv6xxx_cfg {
     u32 chip_identity;
     u32 wifi_tx_gain_level_gn;
     u32 wifi_tx_gain_level_b;
- u32 rssi_ctl;
+    u32 rssi_ctl;
+    u32 sr_bhvr;
     u32 configuration[EXTERNEL_CONFIG_SUPPORT+1][2];
     u8 firmware_path[128];
     u8 flash_bin_path[128];
@@ -55,5 +56,8 @@ struct ssv6xxx_cfg {
     u8 mac_output_path[128];
     u32 ignore_efuse_mac;
     u32 mac_address_mode;
+    u32 sdio_output_timing;
+	u32 directly_ack_low_threshold;
+    u32 directly_ack_high_threshold;
 };
 #endif

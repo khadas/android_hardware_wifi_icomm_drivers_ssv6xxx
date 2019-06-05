@@ -845,15 +845,24 @@ void ssv6200_ampdu_tx_operation (u16 tid, struct ieee80211_sta *sta,
 static void _clear_mpdu_q (struct ieee80211_hw *hw, struct sk_buff_head *q,
                            bool aggregated_mpdu)
 {
+    struct ssv_softc *sc = hw->priv;
     struct sk_buff *skb;
+    struct SKB_info_st *mpdu_skb_info_p = NULL;
     while (1)
     {
         skb = skb_dequeue(q);
         if (!skb)
             break;
+        mpdu_skb_info_p = (SKB_info *) (skb->head);
         if (aggregated_mpdu)
             skb_pull(skb, AMPDU_DELIMITER_LEN);
-        ieee80211_tx_status(hw, skb);
+		if (mpdu_skb_info_p->directly_ack)
+		{
+            dev_kfree_skb_any(skb);
+        }else {
+        	ieee80211_tx_status(hw, skb);
+        }
+		atomic_dec(&sc->ampdu_tx_frame);
     }
 }
 void ssv6200_ampdu_tx_stop (u16 tid, struct ieee80211_sta *sta,
@@ -1169,6 +1178,13 @@ bool ssv6200_ampdu_tx_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
 {
     struct ssv_softc *sc = hw->priv;
     struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
+	
+	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+	struct sk_buff *tx_skb = skb;
+    struct sk_buff *copy_skb = NULL;
+	struct SKB_info_st *copy_skb_info_p = NULL;
+	int ampdu_tx_frame = 0;
+	
     struct SKB_info_st *mpdu_skb_info_p = (SKB_info *) (skb->head);
     struct ieee80211_sta *sta = mpdu_skb_info_p->sta;
     struct ssv_sta_priv_data *ssv_sta_priv =
@@ -1235,6 +1251,29 @@ bool ssv6200_ampdu_tx_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
     mpdu_skb_info_p->ampdu_tx_status = AMPDU_ST_NON_AMPDU;
     mpdu_skb_info_p->ampdu_tx_final_retry_count = 0;
     ssv_sta_priv->ampdu_tid[tidno].ac = skb_get_queue_mapping(skb);
+
+	mpdu_skb_info_p->directly_ack = false;
+	ampdu_tx_frame = atomic_read(&sc->ampdu_tx_frame);
+	
+   if ((sc->force_disable_directly_ack_tx != true) &&
+	   (sc->sc_flags & SC_OP_DIRECTLY_ACK) &&
+	   (ampdu_tx_frame < sc->directly_ack_high_threshold)) {
+	   info = IEEE80211_SKB_CB(skb);
+	   tx_skb = skb;
+	   info->flags |= IEEE80211_TX_STAT_ACK;
+	   copy_skb = skb_copy(tx_skb, GFP_ATOMIC);
+	   if (!copy_skb) {
+		   printk("create TX skb copy failed!\n");
+		   return false;
+	   }
+	   ieee80211_tx_status(sc->hw, tx_skb);
+	   skb = copy_skb;
+	   copy_skb_info_p = (SKB_info *)(skb->head);
+	   copy_skb_info_p->directly_ack = true;
+   } else {
+	   sc->sc_flags &= ~SC_OP_DIRECTLY_ACK;
+   }
+
 #if 0
 #ifndef CONFIG_SSV_SW_ENCRYPT_HW_DECRYPT
     if ((sc->ampdu_ccmp_encrypt == true))
@@ -1265,6 +1304,7 @@ bool ssv6200_ampdu_tx_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
             return false;
         }
         skb_queue_tail(&ssv_sta_priv->ampdu_tid[tidno].ampdu_skb_tx_queue, skb);
+		atomic_inc(&sc->ampdu_tx_frame);
         ssv_sta_priv->ampdu_tid[tidno].timestamp = jiffies;
     }
     _aggr_ampdu_tx_q(hw, &ssv_sta_priv->ampdu_tid[tidno]);
@@ -1674,6 +1714,8 @@ static u32 _ba_map_walker (struct AMPDU_TID_st *ampdu_tid, u32 start_ssn,
 static void _flush_release_queue (struct ieee80211_hw *hw,
                                   struct sk_buff_head *release_queue)
 {
+	struct ssv_softc *sc = hw->priv;
+    int ampdu_tx_frame = 0;
     do
     {
         struct sk_buff *ampdu_skb = __skb_dequeue(release_queue);
@@ -1690,11 +1732,18 @@ static void _flush_release_queue (struct ieee80211_hw *hw,
             tx_info->flags |= IEEE80211_TX_STAT_ACK;
         tx_info->status.ampdu_len = 1;
         tx_info->status.ampdu_ack_len = 1;
+		 if (skb_info->directly_ack) {
+            dev_kfree_skb_any(ampdu_skb);
+        } else {
 #if defined(USE_THREAD_RX) && !defined(IRQ_PROC_TX_DATA)
         ieee80211_tx_status(hw, ampdu_skb);
 #else
         ieee80211_tx_status_irqsafe(hw, ampdu_skb);
 #endif
+        }
+		 ampdu_tx_frame = atomic_sub_return(1, &sc->ampdu_tx_frame);
+        if (ampdu_tx_frame < sc->directly_ack_low_threshold)
+            sc->sc_flags |= SC_OP_DIRECTLY_ACK;
     } while (1);
 }
 #if 0

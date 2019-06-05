@@ -20,9 +20,11 @@
 #include <linux/version.h>
 #include <linux/time.h>
 #include <linux/kthread.h>
+#include <linux/ktime.h>
 #include <net/mac80211.h>
 #include <ssv6200.h>
 #include <hci/hctrl.h>
+#include "linux_80211.h"
 #include "lib.h"
 #include "ssv_rc.h"
 #include "ssv_ht_rc.h"
@@ -204,6 +206,30 @@ bool ssv6xxx_pbuf_free(struct ssv_softc *sc, u32 pbuf_addr)
     mutex_unlock(&sc->mem_mutex);
     return true;
 }
+
+void p2p_connected(struct ssv_softc *sc, int enable)
+{
+    printk("%s: %d\n", __func__, enable);
+    if (enable) {
+        sc->stop_scan = 1;
+
+        SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, 0x00160400); //0xce0020a0
+        SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_1,       0x20380050); //0xce002008
+        SMAC_REG_WRITE(sc->sh, ADR_RX_11GN_CCA_PWR,    0x7f000280); //0xce0040c0
+        SMAC_REG_WRITE(sc->sh, ADR_PHY_EN_1,           0x217f);     //0xce000004
+        //SMAC_REG_WRITE(sc->sh, ADR_RX_11GN_SOFT_RST, 0x10425);    //0xce0043fc  
+    }
+    else {
+        sc->stop_scan = 0;
+		
+        SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, 0x0);        //0xce0020a0
+        SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_1,       0x20300050); //0xce002008
+        SMAC_REG_WRITE(sc->sh, ADR_RX_11GN_CCA_PWR,    0x20000280); //0xce0040c0
+        SMAC_REG_WRITE(sc->sh, ADR_PHY_EN_1,           0x17f);      //0xce000004
+        //SMAC_REG_WRITE(sc->sh, ADR_RX_11GN_SOFT_RST, 0x104e5);    //0xce0043fc
+   }
+}
+
 #ifdef CONFIG_SSV_CABRIO_A
 static const struct ssv6xxx_calib_table vt_tbl[] =
 {
@@ -367,6 +393,8 @@ int ssv6xxx_set_channel(struct ssv_softc *sc, int ch)
     int ret = -1;
     int chidx;
     bool chidx_vld = 0;
+    if(sc->stop_scan)
+        return 0;
     dev_dbg(sc->dev, "Setting channel to %d\n", ch);
     if((sh->cfg.chip_identity == SSV6051Z) || (sc->sh->cfg.chip_identity == SSV6051P))
     {
@@ -464,8 +492,8 @@ int ssv6xxx_set_channel(struct ssv_softc *sc, int ch)
                 SMAC_REG_READ(sc->sh, ADR_DPLL_FB_DIVIDER_REGISTERS_II, &regval);
                 printk("0xce0100a0 [%x]\n",regval);
                 printk("[%x][%x][%x]\n",vt_tbl[sh->cfg.crystal_type][chidx].rf_ctrl_N,vt_tbl[sh->cfg.crystal_type][chidx].rf_ctrl_F,vt_tbl[sh->cfg.crystal_type][chidx].rf_precision_default);
-                dev_info(sc->dev, "Lock to channel %d ([0xce010098]=%x)!!\n", vt_tbl[sh->cfg.crystal_type][chidx].channel_id, regval);
 #endif
+                dev_info(sc->dev, "Lock to channel %d ([0xce010098]=%x)!!\n", vt_tbl[sh->cfg.crystal_type][chidx].channel_id, regval);
                 sc->hw_chan = ch;
                 goto exit;
             }
@@ -759,7 +787,7 @@ static u32 ssv6xxx_set_frame_duration(struct ieee80211_tx_info *info,
             d_phy = 0;
         }
         else {
-            if ((info->band == IEEE80211_BAND_2GHZ) &&
+            if ((info->band == INDEX_80211_BAND_2GHZ) &&
                         !(ssv_rate->d_flags & IEEE80211_RATE_ERP_G))
                             d_phy = WLAN_RC_PHY_CCK;
                     else
@@ -767,14 +795,19 @@ static u32 ssv6xxx_set_frame_duration(struct ieee80211_tx_info *info,
             frame_time = ssv6xxx_non_ht_txtime(d_phy, drate_kbps,
                 len, ctrl_short_preamble);
         }
-        if ((info->band == IEEE80211_BAND_2GHZ) &&
+        if ((info->band == INDEX_80211_BAND_2GHZ) &&
                         !(ssv_rate->c_flags & IEEE80211_RATE_ERP_G))
                             c_phy = WLAN_RC_PHY_CCK;
                     else
                             c_phy = WLAN_RC_PHY_OFDM;
         if (tx_desc->unicast) {
-            ack_time = ssv6xxx_non_ht_txtime(c_phy,
-                crate_kbps, ACK_LEN, ctrl_short_preamble);
+            if (info->flags & IEEE80211_TX_CTL_AMPDU){
+                ack_time = ssv6xxx_non_ht_txtime(c_phy,
+                    crate_kbps, BA_LEN, ctrl_short_preamble);
+            } else {
+                ack_time = ssv6xxx_non_ht_txtime(c_phy,
+                    crate_kbps, ACK_LEN, ctrl_short_preamble);
+            }
         }
         if (tx_desc->do_rts_cts & IEEE80211_TX_RC_USE_RTS_CTS) {
             rts_cts_nav = frame_time;
@@ -2487,7 +2520,10 @@ static void _ssv6xxx_tx (struct ieee80211_hw *hw, struct sk_buff *skb)
     if(sc->ps_status == PWRSV_PREPARE)
     {
         if(ieee80211_is_data(hdr->frame_control))
+#ifdef CONFIG_HAS_WAKELOCK
             ssv_wake_timeout(sc, 1);
+#endif
+			printk("====== ps_status:%d ======== \n", sc->ps_status);
     }
 #endif
     do {
@@ -2783,14 +2819,14 @@ int ssv6xxx_encrypt_task (void *data)
         if(skb_queue_len_safe(&sc->preprocess_q) == 0 || (ta->cpu_offline != 0) )
         {
             ta->running = 0;
-            set_current_state(TASK_UNINTERRUPTIBLE);
+           // set_current_state(TASK_UNINTERRUPTIBLE);
             wait_event_timeout(ta->encrypt_wait_q,
                                   ( (ta->cpu_offline == 0)
                                    && (ta->paused == 0)
                                    && skb_queue_len_safe(&sc->preprocess_q))
                                || kthread_should_stop(),
                                msecs_to_jiffies(60000));
-            set_current_state(TASK_RUNNING);
+            //set_current_state(TASK_RUNNING);
             ta->running = 1;
             CPUMask = *(cpumask_bits(&current->cpus_allowed));
         }
@@ -3010,7 +3046,7 @@ int ssv6xxx_tx_task (void *data)
     while (!kthread_should_stop())
     {
         u32 before_timeout = (-1);
-  set_current_state(TASK_INTERRUPTIBLE);
+  		//set_current_state(TASK_INTERRUPTIBLE);
         before_timeout = wait_event_interruptible_timeout(sc->tx_wait_q,
                                                           ( skb_queue_len(&sc->tx_skb_q)
                                                            || kthread_should_stop()
@@ -3021,7 +3057,7 @@ int ssv6xxx_tx_task (void *data)
             printk("Quit TX task loop...\n");
             break;
         }
-  set_current_state(TASK_RUNNING);
+  //set_current_state(TASK_RUNNING);
         do {
             struct sk_buff *tx_skb = skb_dequeue(&sc->tx_skb_q);
             if (tx_skb == NULL)
@@ -3081,7 +3117,7 @@ int ssv6xxx_rx_task (void *data)
     while (!kthread_should_stop())
     {
         u32 before_timeout = (-1);
-        set_current_state(TASK_INTERRUPTIBLE);
+        //set_current_state(TASK_INTERRUPTIBLE);
         before_timeout = wait_event_interruptible_timeout(sc->rx_wait_q,
                                                           ( skb_queue_len(&sc->rx_skb_q)
                                                            || skb_queue_len(&sc->tx_done_q)
@@ -3092,7 +3128,7 @@ int ssv6xxx_rx_task (void *data)
             printk("Quit RX task loop...\n");
             break;
         }
-        set_current_state(TASK_RUNNING);
+        //set_current_state(TASK_RUNNING);
         cur_jiffies = jiffies;
         if ( (before_timeout == 0)
             || time_before((last_timeout_check_jiffies + wait_period), cur_jiffies))
@@ -3284,7 +3320,8 @@ struct ssv_vif_priv_data * ssv6xxx_config_vif_res(struct ssv_softc *sc,
     priv_vif->crypto_data.ops = NULL;
     priv_vif->crypto_data.priv = NULL;
     #ifdef HAS_CRYPTO_LOCK
-    rwlock_init(&priv_vif->crypto_data.lock);
+    //rwlock_init(&priv_vif->crypto_data.lock);
+	init_rwsem(&priv_vif->crypto_data.lock);
     #endif
     #endif
     vif_info = &sc->vif_info[priv_vif->vif_idx];
@@ -3328,11 +3365,18 @@ static int ssv6200_add_interface(struct ieee80211_hw *hw,
                               MTX_HALT_MNG_UNTIL_DTIM_MSK);
             sc->bq4_dtim = true;
         }
+        if(vif->p2p) {
+            p2p_connected(sc, 1);
+        }
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
         if(vif->p2p == 0)
         {
             printk(KERN_INFO "AP mode init wifi_alive_lock\n");
+#ifdef CONFIG_HAS_WAKELOCK
             ssv_wake_lock(sc);
+			SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, 0x00160200);
+            SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_1, 0x20380050);
+#endif
         }
 #endif
     }
@@ -3358,6 +3402,10 @@ static void ssv6200_remove_interface(struct ieee80211_hw *hw,
              "Removing interface %02x:%02x:%02x:%02x:%02x:%02x. PS=%d\n",
              vif->addr[0], vif->addr[1], vif->addr[2],
              vif->addr[3], vif->addr[4], vif->addr[5], sc->ps_status);
+    if(vif->p2p) {
+        p2p_connected(sc, 0);
+    }
+
     mutex_lock(&sc->mutex);
     #ifdef USE_LOCAL_CRYPTO
     START_WRITE_CRYPTO_DATA(crypto_data);
@@ -3387,7 +3435,11 @@ static void ssv6200_remove_interface(struct ieee80211_hw *hw,
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
         if(vif->p2p == 0)
         {
+#ifdef CONFIG_HAS_WAKELOCK
             ssv_wake_unlock(sc);
+#endif			
+            SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, 0x0);
+            SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_1, 0x20300050);
             printk(KERN_INFO "AP mode destroy wifi_alive_lock\n");
         }
 #endif
@@ -3686,14 +3738,20 @@ static void ssv6200_bss_info_changed(struct ieee80211_hw *hw,
     }
     if (vif->type == NL80211_IFTYPE_STATION){
         printk("NL80211_IFTYPE_STATION!!\n");
-        if ((changed & BSS_CHANGED_ASSOC) && (vif->p2p == 0)){
+        //if ((changed & BSS_CHANGED_ASSOC) && (vif->p2p == 0)){
+        if ((changed & BSS_CHANGED_ASSOC)){
             sc->isAssoc = info->assoc;
             if(!sc->isAssoc){
                 sc->channel_center_freq = 0;
                 sc->ps_aid = 0;
+                if (vif->p2p) {
+                    p2p_connected(sc, 0);
+                }
+                else {
 #ifdef CONFIG_SSV_MRX_EN3_CTRL
                 SMAC_REG_WRITE(sc->sh, ADR_MRX_FLT_EN3, 0x0400);
 #endif
+                }
                 SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, 0x0);
             }
             else{
@@ -3705,10 +3763,15 @@ static void ssv6200_bss_info_changed(struct ieee80211_hw *hw,
                 #endif
                 sc->channel_center_freq = curchan->center_freq;
                 printk(KERN_INFO "!!info->aid = %d\n",info->aid);
-                sc->ps_aid = info->aid;
+                sc->ps_aid = info->aid;		
+                if (vif->p2p) {
+                    p2p_connected(sc, 1);
+                }
+                else {
 #ifdef CONFIG_SSV_MRX_EN3_CTRL
                 SMAC_REG_WRITE(sc->sh, ADR_MRX_FLT_EN3, 0x1000);
 #endif
+                }
             }
         }
 #ifdef CONFIG_SSV_MRX_EN3_CTRL
@@ -3844,7 +3907,8 @@ static int ssv6200_sta_add(struct ieee80211_hw *hw,
                 sta_priv_dat->crypto_data.ops = NULL;
                 sta_priv_dat->crypto_data.priv = NULL;
                 #ifdef HAS_CRYPTO_LOCK
-                rwlock_init(&sta_priv_dat->crypto_data.lock);
+                //rwlock_init(&sta_priv_dat->crypto_data.lock);
+				init_rwsem(&sta_priv_dat->crypto_data.lock);
                 #endif
                 #endif
                 if ( (vif_priv->pair_cipher == SSV_CIPHER_WEP40)
@@ -3980,7 +4044,6 @@ static int ssv6200_sta_remove(struct ieee80211_hw *hw,
                sta_priv_dat->sta_idx, sta->addr[0], sta->addr[1], sta->addr[2],
                sta->addr[3], sta->addr[4], sta->addr[5], priv_vif->vif_idx);
     ssv6200_rx_flow_check(sta_priv_dat, sc);
-    spin_lock_irqsave(&sc->ps_state_lock, flags);
     #ifdef CONFIG_SSV6XXX_DEBUGFS
     #endif
     #ifdef USE_LOCAL_CRYPTO
@@ -3997,6 +4060,7 @@ static int ssv6200_sta_remove(struct ieee80211_hw *hw,
         crypto_data->ops = NULL;
     }
     END_WRITE_CRYPTO_DATA(crypto_data);
+	spin_lock_irqsave(&sc->ps_state_lock, flags);
     #ifdef MULTI_THREAD_ENCRYPT
     _clean_up_crypto_skb(sc, sta);
     #endif
@@ -4132,15 +4196,16 @@ static void ssv6200_sw_scan_start(struct ieee80211_hw *hw,
 static void ssv6200_sw_scan_start(struct ieee80211_hw *hw)
 #endif
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-    ((struct ssv_softc *)(hw->priv))->bScanning = true;
-#endif
- SMAC_REG_READ(((struct ssv_softc *)(hw->priv))->sh, ADR_RX_11B_CCA_CONTROL, &pre_11b_cca_control);
-    SMAC_REG_WRITE(((struct ssv_softc *)(hw->priv))->sh, ADR_RX_11B_CCA_CONTROL, 0x0);
- SMAC_REG_READ(((struct ssv_softc *)(hw->priv))->sh, ADR_RX_11B_CCA_1, &pre_11b_cca_1);
- SMAC_REG_WRITE(((struct ssv_softc *)(hw->priv))->sh, ADR_RX_11B_CCA_1, RX_11B_CCA_IN_SCAN);
+    struct ssv_softc *sc = hw->priv; 
+    sc->bScanning =true;
+	if (sc->stop_scan) 
+    	return;
+    SMAC_REG_READ(sc->sh, ADR_RX_11B_CCA_CONTROL, &pre_11b_cca_control);
+    SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, 0x0);
+    SMAC_REG_READ(sc->sh, ADR_RX_11B_CCA_1, &pre_11b_cca_1);
+    SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_1, RX_11B_CCA_IN_SCAN);
 #ifdef CONFIG_SSV_MRX_EN3_CTRL
-    SMAC_REG_WRITE(((struct ssv_softc *)(hw->priv))->sh, ADR_MRX_FLT_EN3, 0x0400);
+    SMAC_REG_WRITE(sc->sh, ADR_MRX_FLT_EN3, 0x0400);
 #endif
     printk("--------------%s(): \n", __FUNCTION__);
 }
@@ -4151,18 +4216,29 @@ static void ssv6200_sw_scan_complete(struct ieee80211_hw *hw,
 static void ssv6200_sw_scan_complete(struct ieee80211_hw *hw)
 #endif
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-    ((struct ssv_softc *)(hw->priv))->bScanning = false;
-#endif
+    struct ssv_softc *sc = hw->priv; 
 #ifdef CONFIG_SSV_MRX_EN3_CTRL
     bool is_p2p_assoc;
 #endif
-    SMAC_REG_WRITE(((struct ssv_softc *)(hw->priv))->sh, ADR_RX_11B_CCA_CONTROL, pre_11b_cca_control);
-    SMAC_REG_WRITE(((struct ssv_softc *)(hw->priv))->sh, ADR_RX_11B_CCA_1, pre_11b_cca_1);
+    sc->bScanning = false;
+  	if (sc->stop_scan) 
+    	return;
+
+    SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, pre_11b_cca_control);
+    SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_1, pre_11b_cca_1);
 #ifdef CONFIG_SSV_MRX_EN3_CTRL
-    is_p2p_assoc = ((struct ssv_softc *)(hw->priv))->vif_info[1].vif->bss_conf.assoc;
-    if(((struct ssv_softc *)(hw->priv))->ps_aid != 0 && (!is_p2p_assoc))
-    SMAC_REG_WRITE(((struct ssv_softc *)(hw->priv))->sh, ADR_MRX_FLT_EN3, 0x1000);
+	if(sc->vif_info[1].vif!=NULL){
+	    is_p2p_assoc = sc->vif_info[1].vif->bss_conf.assoc;
+	    if(sc->ps_aid != 0 && (!is_p2p_assoc)){
+	    	SMAC_REG_WRITE(sc->sh, ADR_MRX_FLT_EN3, 0x1000);
+	    }
+	}
+	if(sc->vif_info[0].vif!=NULL){
+	    is_p2p_assoc = sc->vif_info[0].vif->bss_conf.assoc;
+	    if(sc->ps_aid != 0 && (!is_p2p_assoc)){
+	    	SMAC_REG_WRITE(sc->sh, ADR_MRX_FLT_EN3, 0x1000);
+	    }
+	}
 #endif
     printk("==============%s(): \n", __FUNCTION__);
 }
@@ -4194,6 +4270,7 @@ static int ssv6200_conf_tx(struct ieee80211_hw *hw,
 {
     struct ssv_softc *sc = hw->priv;
     u32 cw;
+    u32 cw_def[4] ={0xa406, 0x6402, 0x5e3201, 0x2f2201};
     u8 hw_txqid = sc->tx.hw_txqid[queue];
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
     struct ssv_vif_priv_data *priv_vif = (struct ssv_vif_priv_data *)vif->drv_priv;
@@ -4206,7 +4283,7 @@ static int ssv6200_conf_tx(struct ieee80211_hw *hw,
     if (queue > NL80211_TXQ_Q_BK)
         return 1;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
-    if (priv_vif->vif_idx != 0) {
+    if (priv_vif->vif_idx != 0 && vif->p2p == 0) {
         dev_warn(sc->dev, "WMM setting applicable to primary interface only.\n");
         return 1;
     }
@@ -4229,9 +4306,47 @@ static int ssv6200_conf_tx(struct ieee80211_hw *hw,
 #else
     cw = params->aifs&0xf;
 #endif
-    cw|= ((ilog2(params->cw_min+1))&0xf)<<TXQ1_MTX_Q_ECWMIN_SFT;
-    cw|= ((ilog2(params->cw_max+1))&0xf)<<TXQ1_MTX_Q_ECWMAX_SFT;
-    cw|= ((params->txop)&0xff)<<TXQ1_MTX_Q_TXOP_LIMIT_SFT;
+
+#if 0
+    if (vif->p2p && hw_txqid == 1) {
+        cw|= (0x2)<<TXQ1_MTX_Q_ECWMIN_SFT;
+        cw|= (0x2)<<TXQ1_MTX_Q_ECWMAX_SFT;
+        cw|= (0x3f)<<TXQ1_MTX_Q_TXOP_LIMIT_SFT;
+    }
+    else {
+        cw|= ((ilog2(params->cw_min+1))&0xf)<<TXQ1_MTX_Q_ECWMIN_SFT;
+        cw|= ((ilog2(params->cw_max+1))&0xf)<<TXQ1_MTX_Q_ECWMAX_SFT;
+        cw|= ((params->txop)&0xff)<<TXQ1_MTX_Q_TXOP_LIMIT_SFT;
+    }
+    if (vif->p2p) {
+        cw = (0x2)&0xf;
+        cw|= (0x2)<<TXQ1_MTX_Q_ECWMIN_SFT;
+        cw|= (0x2)<<TXQ1_MTX_Q_ECWMAX_SFT;
+        if (hw_txqid == 1)
+            cw|= (0x3f)<<TXQ1_MTX_Q_TXOP_LIMIT_SFT;
+        else
+            cw|= ((params->txop)&0xff)<<TXQ1_MTX_Q_TXOP_LIMIT_SFT;
+    }
+    else {
+        cw|= ((ilog2(params->cw_min+1))&0xf)<<TXQ1_MTX_Q_ECWMIN_SFT;
+        cw|= ((ilog2(params->cw_max+1))&0xf)<<TXQ1_MTX_Q_ECWMAX_SFT;
+        cw|= ((params->txop)&0xff)<<TXQ1_MTX_Q_TXOP_LIMIT_SFT;
+    }
+    SMAC_REG_READ(sc->sh, ADR_WSID0, &regval);
+    printk("cw: 0x%08x, regval: %x\n", cw, regval);
+    if (regval != 0x0)
+        SMAC_REG_WRITE(sc->sh, ADR_TXQ0_MTX_Q_AIFSN+0x100*hw_txqid, cw);
+#endif
+
+    if (params->cw_min == 15 && params->cw_max == 1023) {
+        cw = cw_def[hw_txqid];
+    }
+    else {
+        cw|= ((ilog2(params->cw_min+1))&0xf)<<TXQ1_MTX_Q_ECWMIN_SFT;
+        cw|= ((ilog2(params->cw_max+1))&0xf)<<TXQ1_MTX_Q_ECWMAX_SFT;
+        cw|= ((params->txop)&0xff)<<TXQ1_MTX_Q_TXOP_LIMIT_SFT;
+    }
+    printk("cw: %08x\n", cw);
     SMAC_REG_WRITE(sc->sh, ADR_TXQ0_MTX_Q_AIFSN+0x100*hw_txqid, cw);
     mutex_unlock(&sc->mutex);
     return 0;
@@ -4248,12 +4363,16 @@ static int ssv6200_ampdu_action(struct ieee80211_hw *hw,
               enum ieee80211_ampdu_mlme_action action,
               struct ieee80211_sta *sta,
               u16 tid, u16 *ssn, u8 buf_size)
-#else
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0) && LINUX_VERSION_CODE < KERNEL_VERSION(4,4,69)
 static int ssv6200_ampdu_action(struct ieee80211_hw *hw,
               struct ieee80211_vif *vif,
               enum ieee80211_ampdu_mlme_action action,
               struct ieee80211_sta *sta,
               u16 tid, u16 *ssn, u8 buf_size, bool amsdu)
+#else
+static int ssv6200_ampdu_action(struct ieee80211_hw *hw,
+              struct ieee80211_vif *vif,
+              struct ieee80211_ampdu_params *params)
 #endif
 {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
@@ -4261,6 +4380,13 @@ static int ssv6200_ampdu_action(struct ieee80211_hw *hw,
 #endif
     struct ssv_softc *sc = hw->priv;
     int ret = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,69)
+    struct ieee80211_sta *sta = params->sta;
+    enum ieee80211_ampdu_mlme_action action = params->action;
+    u16 tid = params->tid;
+    u16 *ssn = &(params->ssn);
+    u8 buf_size = params->buf_size;
+#endif
     if(sta == NULL)
         return ret;
     #if (!Enable_AMPDU_Rx)
@@ -4447,13 +4573,12 @@ struct ssv_crypto_data * ssv6xxx_skb_get_tx_cryptops(struct sk_buff *mpdu)
 }
 int ssv6xxx_skb_pre_encrypt(struct sk_buff *mpdu, struct ssv_softc *sc)
 {
-    struct ssv_crypto_data *crypto_data = NULL;
     struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)mpdu->data;
     int ret = -1;
-    crypto_data = ssv6xxx_skb_get_tx_cryptops(mpdu);
+    INIT_READ_CRYPTO_DATA_NB(crypto_data, ssv6xxx_skb_get_tx_cryptops(mpdu));
     if (crypto_data == NULL)
         return -EOPNOTSUPP;
-    START_READ_CRYPTO_DATA(crypto_data);
+    START_READ_CRYPTO_DATA_NB(crypto_data);
     if ((crypto_data->ops != NULL) && (crypto_data->ops->encrypt_prepare != NULL))
     {
         u32 hdrlen = ieee80211_hdrlen(hdr->frame_control);
@@ -4463,18 +4588,17 @@ int ssv6xxx_skb_pre_encrypt(struct sk_buff *mpdu, struct ssv_softc *sc)
     {
         ret = -EOPNOTSUPP;
     }
-    END_READ_CRYPTO_DATA(crypto_data);
+    END_READ_CRYPTO_DATA_NB(crypto_data);
     return ret;
 }
 int ssv6xxx_skb_pre_decrypt(struct sk_buff *mpdu, struct ieee80211_sta *sta, struct ssv_softc *sc)
 {
-    struct ssv_crypto_data *crypto_data = NULL;
     struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)mpdu->data;
     int ret = -1;
-    crypto_data = ssv6xxx_skb_get_rx_cryptops(sc, sta, mpdu);
+	INIT_READ_CRYPTO_DATA_NB(crypto_data, ssv6xxx_skb_get_rx_cryptops(sc, sta, mpdu));
     if (crypto_data == NULL)
         return -EOPNOTSUPP;
-    START_READ_CRYPTO_DATA(crypto_data);
+    START_READ_CRYPTO_DATA_NB(crypto_data);
     if ((crypto_data->ops != NULL) && (crypto_data->ops->decrypt_prepare != NULL))
     {
         u32 hdrlen = ieee80211_hdrlen(hdr->frame_control);
@@ -4484,7 +4608,7 @@ int ssv6xxx_skb_pre_decrypt(struct sk_buff *mpdu, struct ieee80211_sta *sta, str
     {
         ret = -EOPNOTSUPP;
     }
-    END_READ_CRYPTO_DATA(crypto_data);
+    END_READ_CRYPTO_DATA_NB(crypto_data);
     return ret;
 }
 #endif
@@ -4498,8 +4622,9 @@ int ssv6xxx_skb_encrypt(struct sk_buff *mpdu, struct ssv_softc *sc)
     struct ieee80211_sta *sta = skb_info->sta;
     struct ssv_sta_priv_data *sta_priv_dat = NULL;
 #endif
-    struct ssv_crypto_data *crypto_data = NULL;
+
 #ifndef MULTI_THREAD_ENCRYPT
+	INIT_READ_CRYPTO_DATA_NB(crypto_data, NULL);
     if (sta || unicast)
     {
         sta_priv_dat = (struct ssv_sta_priv_data *)sta->drv_priv;
@@ -4511,9 +4636,9 @@ int ssv6xxx_skb_encrypt(struct sk_buff *mpdu, struct ssv_softc *sc)
         crypto_data = &vif_priv->crypto_data;
     }
 #else
-    crypto_data = ssv6xxx_skb_get_tx_cryptops(mpdu);
+    INIT_READ_CRYPTO_DATA_NB(crypto_data, ssv6xxx_skb_get_tx_cryptops(mpdu));
 #endif
-    START_READ_CRYPTO_DATA(crypto_data);
+    START_READ_CRYPTO_DATA_NB(crypto_data);
     if ((crypto_data == NULL) || (crypto_data->ops == NULL) || (crypto_data->priv == NULL))
     {
         #if 0
@@ -4530,7 +4655,7 @@ int ssv6xxx_skb_encrypt(struct sk_buff *mpdu, struct ssv_softc *sc)
         u32 hdrlen = ieee80211_hdrlen(hdr->frame_control);
         ret = crypto_data->ops->encrypt_mpdu(mpdu, hdrlen, crypto_data->priv);
     }
-    END_READ_CRYPTO_DATA(crypto_data);
+    END_READ_CRYPTO_DATA_NB(crypto_data);
  return ret;
 }
 struct ssv_crypto_data *ssv6xxx_skb_get_rx_cryptops(struct ssv_softc *sc, struct ieee80211_sta *sta, struct sk_buff *mpdu)
@@ -4574,16 +4699,15 @@ struct ssv_crypto_data *ssv6xxx_skb_get_rx_cryptops(struct ssv_softc *sc, struct
 int ssv6xxx_skb_decrypt(struct sk_buff *mpdu, struct ieee80211_sta *sta, struct ssv_softc *sc)
 {
     struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)mpdu->data;
-    struct ssv_crypto_data *crypto_data = NULL;
     u32 hdrlen = ieee80211_hdrlen(hdr->frame_control);
-    crypto_data = ssv6xxx_skb_get_rx_cryptops(sc, sta, mpdu);
+    INIT_READ_CRYPTO_DATA_NB(crypto_data, ssv6xxx_skb_get_rx_cryptops(sc, sta, mpdu));
     if (crypto_data != NULL)
     {
         int ret = -1;
-        START_READ_CRYPTO_DATA(crypto_data);
+        START_READ_CRYPTO_DATA_NB(crypto_data);
         if ((crypto_data->ops != NULL) && (crypto_data->priv != NULL))
             ret = crypto_data->ops->decrypt_mpdu(mpdu, hdrlen, crypto_data->priv);
-        END_READ_CRYPTO_DATA(crypto_data);
+        END_READ_CRYPTO_DATA_NB(crypto_data);
         return ret;
     }
  printk("[Local Crypto]: crytp is null\n");
@@ -4708,6 +4832,23 @@ void mitigate_cci(struct ssv_softc *sc, u32 input_level)
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
 extern void ssv6xxx_send_deauth_toself(struct ssv_softc *sc,const u8 *bssid,const u8 *self_addr);
 #endif
+
+
+static u64 ssv6200_get_systime_us(void)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39))
+	struct timespec ts;
+	get_monotonic_boottime(&ts);
+	return ((u64)ts.tv_sec * 1000000) + ts.tv_nsec / 1000;
+#else
+	struct timeval tv;
+	do_gettimeofday(&tv);
+	return ((u64)tv.tv_sec * 1000000) + tv.tv_usec;
+#endif
+}
+
+
+
 static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
 {
     struct ieee80211_rx_status *rxs;
@@ -4784,6 +4925,25 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
     rxs->antenna = 1;
  is_beacon = ieee80211_is_beacon(hdr->frame_control);
  is_probe_resp = ieee80211_is_probe_resp(hdr->frame_control);
+ 
+    if (is_beacon)                      //+++
+   {
+      struct ieee80211_mgmt *mgmt_tmp = NULL;
+      mgmt_tmp = (struct ieee80211_mgmt *)(rx_skb->data + SSV6XXX_RX_DESC_LEN);
+      mgmt_tmp->u.beacon.timestamp = cpu_to_le64(ssv6200_get_systime_us());  
+      //printk("beacon timestamp = %lld\n", mgmt_tmp->u.beacon.timestamp);
+   }
+   if (is_probe_resp)
+   {
+       struct ieee80211_mgmt *mgmt_tmp = NULL;
+      mgmt_tmp = (struct ieee80211_mgmt *)(rx_skb->data + SSV6XXX_RX_DESC_LEN);
+      mgmt_tmp->u.probe_resp.timestamp = cpu_to_le64(ssv6200_get_systime_us());
+      //printk("probe_resp timestamp = %lld\n", mgmt_tmp->u.probe_resp.timestamp);
+   }
+ 
+ 
+ 
+ 
     if (rxdesc->rate_idx < SSV62XX_G_RATE_INDEX && rxphypad->RSVD == 0)
     {
         if (is_beacon || is_probe_resp)
@@ -4811,15 +4971,44 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
                         chan = sc->hw->conf.channel;
                         bss_chan_hw_value = chan->hw_value;
 #else
-                        u32 bss_chan_hw_value = sc->vif_info[0].vif->bss_conf.chandef.chan->hw_value;
+                        u32 bss_chan_hw_value = beacon_channel;
+						if(sc->vif_info[0].vif != NULL){
+							if(sc->vif_info[0].vif->bss_conf.chandef.chan != NULL){
+								bss_chan_hw_value = sc->vif_info[0].vif->bss_conf.chandef.chan->hw_value;
+							}
+						}
+
+						if(sc->vif_info[1].vif != NULL){
+							if(sc->vif_info[1].vif->bss_conf.chandef.chan != NULL){
+								bss_chan_hw_value = sc->vif_info[1].vif->bss_conf.chandef.chan->hw_value;
+							}
+						}
 #endif
                         if( beacon_channel != bss_chan_hw_value )
                         {
                             diff_channel_cnt++;
                             if(diff_channel_cnt >= 25)
                             {
-                                printk(KERN_DEBUG "ssv6xxx_send_deauth_toself by channel change\n");
-                                ssv6xxx_send_deauth_toself(sc, sc->vif_info[0].vif->bss_conf.bssid, sc->vif_info[0].vif->addr);
+								if(sc->vif_info[0].vif != NULL){
+									if(sc->vif_info[0].vif->bss_conf.assoc)
+						            {
+						                if ((sc->vif_info[0].vif->type == NL80211_IFTYPE_STATION) || (sc->vif_info[0].vif->p2p))
+						                {
+						                    printk("sc->vif_info[0].vif->bss_conf.assoc ssv6xxx_send_deauth_toself\n");
+						                    ssv6xxx_send_deauth_toself(sc, sc->vif_info[0].vif->bss_conf.bssid, sc->vif_info[0].vif->addr);
+						                }
+						            }
+								}
+								if(sc->vif_info[1].vif != NULL){
+									if(sc->vif_info[1].vif->bss_conf.assoc)
+						            {
+						                if ((sc->vif_info[1].vif->type == NL80211_IFTYPE_STATION) || (sc->vif_info[1].vif->p2p))
+						                {
+						                    printk("sc->vif_info[1].vif->bss_conf.assoc ssv6xxx_send_deauth_toself\n");
+						                    ssv6xxx_send_deauth_toself(sc, sc->vif_info[1].vif->bss_conf.bssid, sc->vif_info[1].vif->addr);
+						                }
+						            }
+								}
                                 diff_channel_cnt = 0;
                             }
                         }
@@ -4950,7 +5139,7 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
     rxs->flag = RX_FLAG_MACTIME_MPDU;
 #else
-    rxs->flag = RX_FLAG_MACTIME_START;
+    //rxs->flag = RX_FLAG_MACTIME_START;
 #endif
     rxs->rx_flags = 0;
 #endif

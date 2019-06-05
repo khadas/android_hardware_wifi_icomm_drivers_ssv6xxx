@@ -20,7 +20,9 @@
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
+#ifdef CONFIG_HAS_WAKELOCK
 #include <linux/wakelock.h>
+#endif
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
 #endif
@@ -58,6 +60,7 @@ extern u16 generic_deci_tbl[];
 #define BITS_PER_BYTE 8
 #define HT_RC_2_STREAMS(_rc) ((((_rc) & 0x78) >> 3) + 1)
 #define ACK_LEN (14)
+#define BA_LEN (32)
 #define RTS_LEN (20)
 #define CTS_LEN (14)
 #define L_STF 8
@@ -308,6 +311,9 @@ struct ssv_vif_priv_data {
 #define SC_OP_OFFCHAN 0x00000004
 #define SC_OP_FIXED_RATE 0x00000008
 #define SC_OP_SHORT_PREAMBLE 0x00000010
+#define SC_OP_DIRECTLY_ACK BIT(6)
+
+
 struct ssv6xxx_beacon_info {
  u32 pubf_addr;
  u16 len;
@@ -331,7 +337,11 @@ struct ssv_softc {
     bool force_triger_reset;
     unsigned long sdio_throughput_timestamp;
     unsigned long sdio_rx_evt_size;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,7,0)
     struct ieee80211_supported_band sbands[IEEE80211_NUM_BANDS];
+#else
+    struct ieee80211_supported_band sbands[NUM_NL80211_BANDS];
+#endif
     struct ieee80211_channel *cur_channel;
     u16 hw_chan;
     struct mutex mutex;
@@ -366,6 +376,8 @@ struct ssv_softc {
     struct delayed_work bcast_stop_work;
     struct delayed_work bcast_tx_work;
     struct delayed_work thermal_monitor_work;
+    struct workqueue_struct *thermal_wq;
+    int is_sar_enabled;
     bool aid0_bit_set;
     u8 hw_mng_used;
     struct ssv6xxx_bcast_txq bcast_txq;
@@ -393,9 +405,9 @@ struct ssv_softc {
  struct work_struct set_ampdu_rx_del_work;
     bool isAssoc;
     u16 channel_center_freq;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
+//#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
     bool bScanning;
-#endif
+//#endif
     int ps_status;
     u16 ps_aid;
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
@@ -438,10 +450,17 @@ struct ssv_softc {
 #ifdef CONFIG_P2P_NOA
     struct ssv_p2p_noa p2p_noa;
 #endif
+    int stop_scan;
     struct timer_list watchdog_timeout;
     u32 watchdog_flag;
     wait_queue_head_t fw_wait_q;
     u32 iq_cali_done;
+    u32 sr_bhvr;
+	
+    bool force_disable_directly_ack_tx;
+	atomic_t ampdu_tx_frame;
+    int directly_ack_low_threshold;
+    int directly_ack_high_threshold;
 };
 enum {
     IQ_CALI_RUNNING,
@@ -520,32 +539,79 @@ int ssv6xxx_skb_pre_decrypt(struct sk_buff *mpdu, struct ieee80211_sta *sta, str
 int ssv6xxx_encrypt_task (void *data);
 #endif
 #ifdef HAS_CRYPTO_LOCK
+
     #define INIT_WRITE_CRYPTO_DATA(data, init) \
-        struct ssv_crypto_data *data = (init); \
-        unsigned long data##_flags;
+		struct ssv_crypto_data      *data = (init);
+
+	#define INIT_WRITE_CRYPTO_DATA_NB(data, init) \
+		struct ssv_crypto_data 	 *data = (init); \
+		unsigned long	data##_flags;
+
     #define START_WRITE_CRYPTO_DATA(data) \
         do { \
-            write_lock_irqsave(&(data)->lock, data##_flags); \
+            down_write(&(data)->lock); \
         } while (0)
+	#define START_WRITE_CRYPTO_DATA_NB(data) \
+		do { \
+			while(!down_write_trylock(&(data)->lock)); \
+			local_irq_save(data##_flags); \
+		} while (0)
+
     #define END_WRITE_CRYPTO_DATA(data) \
         do { \
-            write_unlock_irqrestore(&(data)->lock, data##_flags); \
+            up_write(&(data)->lock); \
         } while (0)
+
+	#define END_WRITE_CRYPTO_DATA_NB(data) \
+        do { \
+            local_irq_restore(data##_flags); \
+            up_write(&(data)->lock); \
+        } while (0)
+
+    #define INIT_READ_CRYPTO_DATA(data, init) \
+        struct ssv_crypto_data      *data = (init);
+
+    #define INIT_READ_CRYPTO_DATA_NB(data, init) \
+        struct ssv_crypto_data      *data = (init); \
+        unsigned long                data##_flags;
+
     #define START_READ_CRYPTO_DATA(data) \
         do { \
-            read_lock(&(data)->lock); \
+            down_read(&(data)->lock); \
         } while (0)
+	#define START_READ_CRYPTO_DATA_NB(data) \
+		do { \
+			 while(!down_read_trylock(&(data)->lock)); \
+			 local_irq_save(data##_flags); \
+		} while (0)
+
     #define END_READ_CRYPTO_DATA(data) \
         do { \
-            read_unlock(&(data)->lock); \
+            up_read(&(data)->lock); \
+        } while (0)
+
+	#define END_READ_CRYPTO_DATA_NB(data) \
+        do { \
+            local_irq_restore(data##_flags); \
+            up_read(&(data)->lock); \
         } while (0)
 #else
     #define INIT_WRITE_CRYPTO_DATA(data, init) \
         struct ssv_crypto_data *data = (init);
+    #define INIT_WRITE_CRYPTO_DATA_NB(data, init) \
+	    struct ssv_crypto_data      *data = (init);
     #define START_WRITE_CRYPTO_DATA(data) do { } while (0)
+	#define START_WRITE_CRYPTO_DATA_NB(data) do { } while (0)
     #define END_WRITE_CRYPTO_DATA(data) do { } while (0)
+	#define END_WRITE_CRYPTO_DATA_NB(data)   do { } while (0)
+	#define INIT_READ_CRYPTO_DATA(data, init) \
+		struct ssv_crypto_data      *data = (init);
+	#define INIT_READ_CRYPTO_DATA_NB(data, init) \
+		struct ssv_crypto_data      *data = (init);
     #define START_READ_CRYPTO_DATA(data) do { } while (0)
+	#define START_READ_CRYPTO_DATA_NB(data)  do { } while (0)
     #define END_READ_CRYPTO_DATA(data) do { } while (0)
+	#define END_READ_CRYPTO_DATA_NB(data)   do { } while (0)
 #endif
 #endif
 #ifdef CONFIG_SSV6XXX_DEBUGFS

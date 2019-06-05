@@ -26,10 +26,16 @@
 #include <linux/if_ether.h>
 #include <linux/if_arp.h>
 #include <asm/string.h>
+#include <linux/version.h>
 #include <linux/wireless.h>
 #include <linux/ieee80211.h>
 #include <net/iw_handler.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+#include <crypto/hash.h>
+#include <crypto/skcipher.h>
+#else
 #include <linux/crypto.h>
+#endif
 #include <linux/crc32.h>
 #include <net/lib80211.h>
 #include "sec.h"
@@ -51,10 +57,17 @@ struct lib80211_tkip_data {
  u32 dot11RSNAStatsTKIPICVErrors;
  u32 dot11RSNAStatsTKIPLocalMICFailures;
  int key_idx;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+ struct crypto_skcipher *rx_tfm_arc4;
+ struct crypto_ahash *rx_tfm_michael;
+ struct crypto_skcipher *tx_tfm_arc4;
+ struct crypto_ahash *tx_tfm_michael;
+#else
  struct crypto_blkcipher *rx_tfm_arc4;
  struct crypto_hash *rx_tfm_michael;
  struct crypto_blkcipher *tx_tfm_arc4;
  struct crypto_hash *tx_tfm_michael;
+#endif
  u8 rx_hdr[16], tx_hdr[16];
  unsigned long flags;
 };
@@ -70,6 +83,50 @@ static unsigned long lib80211_tkip_get_flags(void *priv)
  struct lib80211_tkip_data *_priv = priv;
  return _priv->flags;
 }
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+static void *lib80211_tkip_init(int key_idx)
+{
+ struct lib80211_tkip_data *priv;
+ priv = kzalloc(sizeof(*priv), GFP_ATOMIC);
+ if (priv == NULL)
+  goto fail;
+ priv->key_idx = key_idx;
+ priv->tx_tfm_arc4 = crypto_alloc_skcipher("ecb(arc4)", 0,
+        CRYPTO_ALG_ASYNC);
+ if (IS_ERR(priv->tx_tfm_arc4)) {
+  priv->tx_tfm_arc4 = NULL;
+  goto fail;
+ }
+ priv->tx_tfm_michael = crypto_alloc_ahash("michael_mic", 0,
+        CRYPTO_ALG_ASYNC);
+ if (IS_ERR(priv->tx_tfm_michael)) {
+  priv->tx_tfm_michael = NULL;
+  goto fail;
+ }
+ priv->rx_tfm_arc4 = crypto_alloc_skcipher("ecb(arc4)", 0,
+        CRYPTO_ALG_ASYNC);
+ if (IS_ERR(priv->rx_tfm_arc4)) {
+  priv->rx_tfm_arc4 = NULL;
+  goto fail;
+ }
+ priv->rx_tfm_michael = crypto_alloc_ahash("michael_mic", 0,
+        CRYPTO_ALG_ASYNC);
+ if (IS_ERR(priv->rx_tfm_michael)) {
+  priv->rx_tfm_michael = NULL;
+  goto fail;
+ }
+ return priv;
+      fail:
+ if (priv) {
+  crypto_free_ahash(priv->tx_tfm_michael);
+  crypto_free_skcipher(priv->tx_tfm_arc4);
+  crypto_free_ahash(priv->rx_tfm_michael);
+  crypto_free_skcipher(priv->rx_tfm_arc4);
+  kfree(priv);
+ }
+ return NULL;
+}
+#else
 static void *lib80211_tkip_init(int key_idx)
 {
  struct lib80211_tkip_data *priv;
@@ -116,6 +173,20 @@ static void *lib80211_tkip_init(int key_idx)
  }
  return NULL;
 }
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+static void lib80211_tkip_deinit(void *priv)
+{
+ struct lib80211_tkip_data *_priv = priv;
+ if (_priv) {
+  crypto_free_ahash(_priv->tx_tfm_michael);
+  crypto_free_skcipher(_priv->tx_tfm_arc4);
+  crypto_free_ahash(_priv->rx_tfm_michael);
+  crypto_free_skcipher(_priv->rx_tfm_arc4);
+ }
+ kfree(priv);
+}
+#else
 static void lib80211_tkip_deinit(void *priv)
 {
  struct lib80211_tkip_data *_priv = priv;
@@ -131,6 +202,7 @@ static void lib80211_tkip_deinit(void *priv)
  }
  kfree(priv);
 }
+#endif
 static inline u16 RotR1(u16 val)
 {
  return (val >> 1) | (val << 15);
@@ -289,7 +361,12 @@ static int lib80211_tkip_hdr(struct sk_buff *skb, int hdr_len,
 static int lib80211_tkip_encrypt(struct sk_buff *skb, int hdr_len, void *priv)
 {
  struct lib80211_tkip_data *tkey = priv;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+ SKCIPHER_REQUEST_ON_STACK(req, tkey->tx_tfm_arc4);
+ int err;
+#else
  struct blkcipher_desc desc = { .tfm = tkey->tx_tfm_arc4 };
+#endif
  int len;
  u8 rc4key[16], *pos, *icv;
  u32 crc;
@@ -315,9 +392,20 @@ static int lib80211_tkip_encrypt(struct sk_buff *skb, int hdr_len, void *priv)
  icv[1] = crc >> 8;
  icv[2] = crc >> 16;
  icv[3] = crc >> 24;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+ crypto_skcipher_setkey(tkey->tx_tfm_arc4, rc4key, 16);
+ sg_init_one(&sg, pos, len + 4);
+ skcipher_request_set_tfm(req, tkey->tx_tfm_arc4);
+ skcipher_request_set_callback(req, 0, NULL, NULL);
+ skcipher_request_set_crypt(req, &sg, &sg, len + 4, NULL);
+ err = crypto_skcipher_encrypt(req);
+ skcipher_request_zero(req);
+ return err;
+#else
  crypto_blkcipher_setkey(tkey->tx_tfm_arc4, rc4key, 16);
  sg_init_one(&sg, pos, len + 4);
  return crypto_blkcipher_encrypt(&desc, &sg, &sg, len + 4);
+#endif
 }
 static inline int tkip_replay_check(u32 iv32_n, u16 iv16_n,
         u32 iv32_o, u16 iv16_o)
@@ -330,7 +418,12 @@ static inline int tkip_replay_check(u32 iv32_n, u16 iv16_n,
 static int lib80211_tkip_decrypt(struct sk_buff *skb, int hdr_len, void *priv)
 {
  struct lib80211_tkip_data *tkey = priv;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+ SKCIPHER_REQUEST_ON_STACK(req, tkey->rx_tfm_arc4);
+ int err;
+#else
  struct blkcipher_desc desc = { .tfm = tkey->rx_tfm_arc4 };
+#endif
  u8 rc4key[16];
  u8 keyidx, *pos;
  u32 iv32;
@@ -394,9 +487,20 @@ static int lib80211_tkip_decrypt(struct sk_buff *skb, int hdr_len, void *priv)
  }
  tkip_mixing_phase2(rc4key, tkey->key, tkey->rx_ttak, iv16);
  plen = skb->len - hdr_len - 12;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+ crypto_skcipher_setkey(tkey->rx_tfm_arc4, rc4key, 16);
+ sg_init_one(&sg, pos, plen + 4);
+ skcipher_request_set_tfm(req, tkey->rx_tfm_arc4);
+ skcipher_request_set_callback(req, 0, NULL, NULL);
+ skcipher_request_set_crypt(req, &sg, &sg, plen + 4, NULL);
+ err = crypto_skcipher_decrypt(req);
+ skcipher_request_zero(req);
+ if (err) {
+#else
  crypto_blkcipher_setkey(tkey->rx_tfm_arc4, rc4key, 16);
  sg_init_one(&sg, pos, plen + 4);
  if (crypto_blkcipher_decrypt(&desc, &sg, &sg, plen + 4)) {
+#endif
   if (net_ratelimit()) {
    printk(KERN_DEBUG ": TKIP: failed to decrypt "
           "received packet from %pM\n",
@@ -429,6 +533,30 @@ static int lib80211_tkip_decrypt(struct sk_buff *skb, int hdr_len, void *priv)
  skb_trim(skb, skb->len - 4);
  return keyidx;
 }
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+static int michael_mic(struct crypto_ahash *tfm_michael, u8 * key, u8 * hdr,
+         u8 * data, size_t data_len, u8 * mic)
+{
+ AHASH_REQUEST_ON_STACK(req, tfm_michael);
+ struct scatterlist sg[2];
+ int err;
+ if (tfm_michael == NULL) {
+  pr_warn("%s(): tfm_michael == NULL\n", __func__);
+  return -1;
+ }
+ sg_init_table(sg, 2);
+ sg_set_buf(&sg[0], hdr, 16);
+ sg_set_buf(&sg[1], data, data_len);
+ if (crypto_ahash_setkey(tfm_michael, key, 8))
+  return -1;
+ ahash_request_set_tfm(req, tfm_michael);
+ ahash_request_set_callback(req, 0, NULL, NULL);
+ ahash_request_set_crypt(req, sg, mic, data_len + 16);
+ err = crypto_ahash_digest(req);
+ ahash_request_zero(req);
+ return err;
+}
+#else
 static int michael_mic(struct crypto_hash *tfm_michael, u8 * key, u8 * hdr,
          u8 * data, size_t data_len, u8 * mic)
 {
@@ -447,6 +575,7 @@ static int michael_mic(struct crypto_hash *tfm_michael, u8 * key, u8 * hdr,
  desc.flags = 0;
  return crypto_hash_digest(&desc, sg, data_len + 16, mic);
 }
+#endif
 static void michael_mic_hdr(struct sk_buff *skb, u8 * hdr)
 {
  struct ieee80211_hdr *hdr11;
@@ -549,10 +678,17 @@ static int lib80211_tkip_set_key(void *key, int len, u8 * seq, void *priv)
 {
  struct lib80211_tkip_data *tkey = priv;
  int keyidx;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+ struct crypto_ahash *tfm = tkey->tx_tfm_michael;
+ struct crypto_skcipher *tfm2 = tkey->tx_tfm_arc4;
+ struct crypto_ahash *tfm3 = tkey->rx_tfm_michael;
+ struct crypto_skcipher *tfm4 = tkey->rx_tfm_arc4;
+#else
  struct crypto_hash *tfm = tkey->tx_tfm_michael;
  struct crypto_blkcipher *tfm2 = tkey->tx_tfm_arc4;
  struct crypto_hash *tfm3 = tkey->rx_tfm_michael;
  struct crypto_blkcipher *tfm4 = tkey->rx_tfm_arc4;
+#endif
  keyidx = tkey->key_idx;
  memset(tkey, 0, sizeof(*tkey));
  tkey->key_idx = keyidx;

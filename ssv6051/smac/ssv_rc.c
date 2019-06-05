@@ -1286,7 +1286,7 @@ static void ssv62xx_rc_caps(struct ssv_sta_rc_info *rc_sta)
         spinfo->txrate_idx = ssv6xxx_rate_highest_index(rc_sta);
 #endif
     }
-    spinfo->real_hw_index = 99;
+    spinfo->real_hw_index = 0;
     spinfo->probe_cnt = MAXPROBES;
     spinfo->tmp_rate_idx = spinfo->txrate_idx;
     spinfo->oldrate = spinfo->txrate_idx;
@@ -1414,7 +1414,8 @@ static void ssv6xxx_rate_update(void *priv, struct ieee80211_supported_band *sba
                             u32 changed, enum nl80211_channel_type oper_chan_type)
 #endif
 {
-    ssv6xxx_rate_update_rc_type(priv, sband, sta, priv_sta);
+    //ssv6xxx_rate_update_rc_type(priv, sband, sta, priv_sta);
+	printk("%s: changed=%d\n", __FUNCTION__, changed); //not support rate update for 6051P.
 }
 static void ssv6xxx_rate_init(void *priv, struct ieee80211_supported_band *sband,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0)
@@ -1608,6 +1609,13 @@ u8 ssv6xxx_rc_hw_rate_update_check(struct sk_buff *skb, struct ssv_softc *sc, u3
         else
             rateidx = spinfo->real_hw_index;
     }
+
+    if(rateidx >= RATE_TABLE_SIZE)
+    {
+        printk("[ERROR]rateidx over range\n\r");
+        return 0;
+    }
+
     rc_rate = &ssv_rc->rc_table[rateidx];
 #ifdef RATE_CONTROL_STUPID_DEBUG
     if (spinfo->monitoring && (spinfo->probe_cnt))

@@ -27,6 +27,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/version.h>
 #include <linux/firmware.h>
+#include <linux/reboot.h>
 #ifdef CONFIG_FW_ALIGNMENT_CHECK
 #include <linux/skbuff.h>
 #endif
@@ -58,7 +59,14 @@ static void ssv6xxx_high_sdio_clk(struct sdio_func *func);
 static void ssv6xxx_low_sdio_clk(struct sdio_func *func);
 extern void *ssv6xxx_ifdebug_info[];
 extern int ssv_devicetype;
+extern void ssv6xxx_deinit_prepare(void);  
 static int ssv6xxx_sdio_status = 0;
+u32 sdio_sr_bhvr = SUSPEND_RESUME_0;
+EXPORT_SYMBOL(sdio_sr_bhvr);
+
+static DEFINE_MUTEX(reboot_lock);
+u32 shutdown_flags = SSV_SYS_REBOOT;
+
 struct ssv6xxx_sdio_glue
 {
     struct device *dev;
@@ -139,10 +147,17 @@ static int __must_check ssv6xxx_sdio_read_reg(struct device *child, u32 addr,
     struct ssv6xxx_sdio_glue *glue = dev_get_drvdata(child->parent);
     struct sdio_func *func ;
     u8 data[4];
+    u8 *tmp = NULL;
+    tmp = kmalloc(1, GFP_KERNEL);
+    if (!tmp)
+         return ret;
+    memset(tmp, 0, sizeof(tmp));
     if ( (wlan_data.is_enabled == false)
         || (glue == NULL)
-        || (glue->dev_ready == false))
-  return ret;
+        || (glue->dev_ready == false)) {
+         kfree(tmp);
+         return ret;
+    }
     if ( glue != NULL )
     {
         func = dev_to_sdio_func(glue->dev);
@@ -151,18 +166,21 @@ static int __must_check ssv6xxx_sdio_read_reg(struct device *child, u32 addr,
         data[1] = (addr >> ( 8 )) &0xff;
         data[2] = (addr >> ( 16 )) &0xff;
         data[3] = (addr >> ( 24 )) &0xff;
-        ret = sdio_memcpy_toio(func, glue->regIOPort, data, 4);
+        memcpy(tmp, data, 4);
+        ret = sdio_memcpy_toio(func, glue->regIOPort, tmp, 4);
         if (WARN_ON(ret))
         {
             dev_err(child->parent, "sdio read reg write address failed (%d)\n", ret);
             goto io_err;
         }
-        ret = sdio_memcpy_fromio(func, data, glue->regIOPort, 4);
+        ret = sdio_memcpy_fromio(func, tmp, glue->regIOPort, 4);
         if (WARN_ON(ret))
         {
             dev_err(child->parent, "sdio read reg from I/O failed (%d)\n",ret);
          goto io_err;
       }
+        memset(data, 0, sizeof(data));
+        memcpy(data, tmp, 4);
         if(ret == 0)
         {
             *buf = (data[0]&0xff);
@@ -179,6 +197,7 @@ io_err:
     {
         dev_err(child->parent, "sdio read reg glue == NULL!!!\n");
     }
+    kfree(tmp);
     return ret;
 }
 #ifdef ENABLE_WAKE_IO_ISR_WHEN_HCI_ENQUEUE
@@ -203,10 +222,17 @@ static int __must_check ssv6xxx_sdio_write_reg(struct device *child, u32 addr,
     struct ssv6xxx_sdio_glue *glue = dev_get_drvdata(child->parent);
     struct sdio_func *func;
     u8 data[8];
+    u8 *tmp = NULL;
+    tmp = kmalloc(1, GFP_KERNEL);
+    if (!tmp)
+         return ret;
+    memset(tmp, 0, sizeof(tmp));
     if ( (wlan_data.is_enabled == false)
         || (glue == NULL)
-        || (glue->dev_ready == false))
-  return ret;
+        || (glue->dev_ready == false)) {
+	   kfree(tmp);
+           return ret;
+    }
     if ( glue != NULL )
     {
         func = dev_to_sdio_func(glue->dev);
@@ -220,7 +246,10 @@ static int __must_check ssv6xxx_sdio_write_reg(struct device *child, u32 addr,
         data[5] = (buf >> ( 8 )) &0xff;
         data[6] = (buf >> ( 16 )) &0xff;
         data[7] = (buf >> ( 24 )) &0xff;
-        ret = sdio_memcpy_toio(func, glue->regIOPort, data, 8);
+	memcpy(tmp, data, 8);
+        ret = sdio_memcpy_toio(func, glue->regIOPort, tmp, 8);
+	memset(data, 0, sizeof(data));
+	memcpy(data, tmp, 8);
         sdio_release_host(func);
 #ifdef __x86_64
         udelay(50);
@@ -230,6 +259,7 @@ static int __must_check ssv6xxx_sdio_write_reg(struct device *child, u32 addr,
     {
         dev_err(child->parent, "sdio write reg glue == NULL!!!\n");
     }
+    kfree(tmp);
     return ret;
 }
 static int ssv6xxx_sdio_write_sram(struct device *child, u32 addr, u8 *data, u32 size)
@@ -901,6 +931,8 @@ static void ssv6xxx_sdio_irq_request(struct device *child,irq_handler_t irq_hand
         }
     }
 }
+
+extern struct ssv6xxx_cfg ssv_cfg;
 static void ssv6xxx_sdio_read_parameter(struct sdio_func *func,
         struct ssv6xxx_sdio_glue *glue)
 {
@@ -1374,13 +1406,13 @@ static int ssv6xxx_sdio_trigger_pmu(struct device *dev)
 }
 static void ssv6xxx_sdio_reset(struct device *child)
 {
- struct ssv6xxx_sdio_glue *glue = dev_get_drvdata(child->parent);
- struct sdio_func *func = dev_to_sdio_func(glue->dev);
- printk("%s\n", __FUNCTION__);
- if(glue == NULL || glue->dev == NULL || func == NULL)
-  return;
+    struct ssv6xxx_sdio_glue *glue = dev_get_drvdata(child->parent);
+    struct sdio_func *func = dev_to_sdio_func(glue->dev);
+    printk("%s\n", __FUNCTION__);
+    if(glue == NULL || glue->dev == NULL || func == NULL)
+        return;
     ssv6xxx_sdio_trigger_pmu(glue->dev);
- ssv6xxx_do_sdio_wakeup( func);
+    ssv6xxx_do_sdio_wakeup( func);
 }
 #ifdef AML_WIFI_MAC
 extern void sdio_reinit(void);
@@ -1391,14 +1423,15 @@ static int ssv6xxx_sdio_suspend(struct device *dev)
     struct sdio_func *func = dev_to_sdio_func(dev);
      mmc_pm_flag_t flags = sdio_get_host_pm_caps(func);
 #ifdef AML_WIFI_MAC
-    if (!(flags & MMC_PM_KEEP_POWER)) {
-  printk("%s : module will not get power support during suspend\n", __func__);
-  ssv6xxx_sdio_remove(func);
-  mdelay(100);
-  extern_wifi_set_enable(0);
-  mdelay(100);
-  return 0;
- }else
+    if (!(flags & MMC_PM_KEEP_POWER) || sdio_sr_bhvr == SUSPEND_RESUME_1) {
+        printk("%s : module will not get power support during suspend. %u\n", __func__, sdio_sr_bhvr);
+        ssv6xxx_deinit_prepare();
+        ssv6xxx_sdio_remove(func);
+        mdelay(100);
+        extern_wifi_set_enable(0);
+        mdelay(10);
+        return 0;
+    }else
 #endif
     {
         int ret = 0;
@@ -1449,12 +1482,13 @@ static int ssv6xxx_sdio_resume(struct device *dev)
  struct sdio_func *func = dev_to_sdio_func(dev);
 #ifdef AML_WIFI_MAC
  mmc_pm_flag_t flags = sdio_get_host_pm_caps(func);
- if (!(flags & MMC_PM_KEEP_POWER)) {
-  printk("%s : module is reset, run probe now !!\n", __func__);
+ mdelay(100);
+ if (!(flags & MMC_PM_KEEP_POWER) || sdio_sr_bhvr == SUSPEND_RESUME_1) {
+  printk("%s : module is reset, run probe now !!%u\n", __func__,sdio_sr_bhvr);
   extern_wifi_set_enable(1);
-  mdelay(200);
-  sdio_reinit();
   mdelay(100);
+  sdio_reinit();
+  mdelay(150);
   ssv6xxx_sdio_probe(func, NULL);
   return 0;
  }else
@@ -1476,6 +1510,57 @@ static const struct dev_pm_ops ssv6xxx_sdio_pm_ops =
     .resume = ssv6xxx_sdio_resume,
 };
 #endif
+
+static void ssv6xxx_sdio_shutdown(struct device *dev)
+{
+	struct sdio_func *func = dev_to_sdio_func(dev);
+	printk("%s  shutdown_flags:%d \n", __func__,shutdown_flags);
+	switch(shutdown_flags){
+		case SSV_SYS_REBOOT :
+		case SSV_SYS_HALF:
+				printk("%s ,system reboot  ..\n", __func__);
+				break;
+		case SSV_SYS_POWER_OFF :
+				printk("%s ,system shutdown .. \n", __func__);
+				ssv6xxx_deinit_prepare();
+				ssv6xxx_sdio_remove(func);
+				mdelay(100);
+				extern_wifi_set_enable(0);
+				mdelay(100);
+				break;
+		default:
+			printk("%s,unknown event code ..", __func__);
+	}
+
+}
+
+static int ssv6xxx_reboot_notify(struct notifier_block *nb,
+			       unsigned long event, void *p)
+{
+
+	printk("%s, code = %ld \n",__FUNCTION__,event);
+	switch (event){
+		case SYS_DOWN:
+			shutdown_flags = SYS_DOWN;
+			break;
+		case SYS_HALT:
+			shutdown_flags = SYS_HALT;
+			break;
+		case SYS_POWER_OFF:
+			shutdown_flags = SYS_POWER_OFF;
+			break;
+		default:
+			shutdown_flags = event;
+			break;
+	}
+	return NOTIFY_DONE;
+}
+static struct notifier_block ssv6xxx_reboot_notifier = {
+	.notifier_call = ssv6xxx_reboot_notify,
+	.next = NULL,
+	.priority = 0,
+};
+
 struct sdio_driver ssv6xxx_sdio_driver =
 {
     .name = "SSV6XXX_SDIO",
@@ -1488,7 +1573,8 @@ struct sdio_driver ssv6xxx_sdio_driver =
 #endif
 #ifdef CONFIG_PM
     .drv = {
-        .pm = &ssv6xxx_sdio_pm_ops,
+        .pm = &ssv6xxx_sdio_pm_ops, 
+		.shutdown = ssv6xxx_sdio_shutdown,
     },
 #endif
 };
@@ -1500,6 +1586,7 @@ static int __init ssv6xxx_sdio_init(void)
 #endif
 {
     printk(KERN_INFO "ssv6xxx_sdio_init\n");
+	register_reboot_notifier(&ssv6xxx_reboot_notifier);
     return sdio_register_driver(&ssv6xxx_sdio_driver);
 }
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
@@ -1509,6 +1596,7 @@ static void __exit ssv6xxx_sdio_exit(void)
 #endif
 {
     printk(KERN_INFO "ssv6xxx_sdio_exit\n");
+	unregister_reboot_notifier(&ssv6xxx_reboot_notifier);
     sdio_unregister_driver(&ssv6xxx_sdio_driver);
 }
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
