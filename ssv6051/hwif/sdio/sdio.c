@@ -151,7 +151,7 @@ static int __must_check ssv6xxx_sdio_read_reg(struct device *child, u32 addr,
     tmp = kmalloc(1, GFP_KERNEL);
     if (!tmp)
          return ret;
-    memset(tmp, 0, sizeof(tmp));
+    memset(tmp, 0, 8);
     if ( (wlan_data.is_enabled == false)
         || (glue == NULL)
         || (glue->dev_ready == false)) {
@@ -226,7 +226,7 @@ static int __must_check ssv6xxx_sdio_write_reg(struct device *child, u32 addr,
     tmp = kmalloc(1, GFP_KERNEL);
     if (!tmp)
          return ret;
-    memset(tmp, 0, sizeof(tmp));
+    memset(tmp, 0, 8);
     if ( (wlan_data.is_enabled == false)
         || (glue == NULL)
         || (glue->dev_ready == false)) {
