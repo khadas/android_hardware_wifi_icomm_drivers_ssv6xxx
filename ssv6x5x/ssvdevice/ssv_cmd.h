@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -17,10 +16,12 @@
 #ifndef _SSV_CMD_H_
 #define _SSV_CMD_H_ 
 #define CLI_ARG_SIZE 10
-#define PROC_DIR_ENTRY "ssv"
+#define PROC_DIR_ENTRY "tu_ssv"
 #define PROC_DEVICETYPE_ENTRY "ssv_devicetype"
 #define PROC_SSV_CMD_ENTRY "ssv_cmd"
 #define PROC_SSV_DBG_ENTRY "ssv_dbg_fs"
+#define PROC_SSV_FREQ_ENTRY "freq"
+#define PROC_SSV_P2P_ENTRY "p2p"
 #define MAX_CHARS_PER_LINE 256
 #ifdef CONFIG_SMART_ICOMM
 #define PROC_SI_ENTRY "smart_config"
@@ -87,7 +88,7 @@ void ssvdevice_skb_free(struct sk_buff *skb);
     ssv6xxx_read_id_len_threshold(_sh, _tx_len, _rx_len)
 #define SSV_READ_TAG_STATUS(_sh,_ava_status) ssv6xxx_read_tag_status(_sh, _ava_status)
 #define SSV_CMD_MIB(_sh,_argc,argv) ssv6xxx_cmd_mib(_sh, _argc, argv)
-#define SSV_CMD_POWER_SAVING(_sh,_argc,argv) ssv6xxx_cmd_mib(_sh, _argc, argv)
+#define SSV_CMD_POWER_SAVING(_sh,_argc,argv) ssv6xxx_cmd_power_saving(_sh, _argc, argv)
 #define SSV_GET_FW_VERSION(_sh,_regval) ssv6xxx_get_fw_version(_sh, _regval)
 #define SSV_TXTPUT_SET_DESC(_sh,_skb) ssv6xxx_txtput_set_desc(_sh, _skb)
 #define SSV_READRG_TXQ_INFO2(_ifops,_sh,_txq_info2) \

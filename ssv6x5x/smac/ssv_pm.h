@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -25,12 +24,12 @@ void ssv6xxx_late_resume(struct early_suspend *h);
 void ssv6xxx_early_suspend(void);
 void ssv6xxx_late_resume(void);
 #endif
-//#ifdef CONFIG_HAS_WAKELOCK
+#ifdef CONFIG_HAS_WAKELOCK
 void ssv_wakelock_init(struct ssv_softc *sc);
 void ssv_wakelock_destroy(struct ssv_softc *sc);
 void ssv_wake_lock(struct ssv_softc *sc);
 void ssv_wake_timeout(struct ssv_softc *sc, int secs);
 void ssv_wake_unlock(struct ssv_softc *sc);
-//#endif
+#endif
 #endif
 #endif

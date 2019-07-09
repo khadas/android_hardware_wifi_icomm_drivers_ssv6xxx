@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -25,11 +24,60 @@
 #include <smac/dev.h>
 #include <hal.h>
 #include "hctrl.h"
-extern int ssv_tx_task_prio;
-MODULE_AUTHOR("iComm Semiconductor Co., Ltd");
+MODULE_AUTHOR("iComm-semi, Ltd");
 MODULE_DESCRIPTION("HCI driver for SSV6xxx 802.11n wireless LAN cards.");
 MODULE_SUPPORTED_DEVICE("SSV6xxx WLAN cards");
 MODULE_LICENSE("Dual BSD/GPL");
+static void ssv6xxx_hci_trigger_tx(struct ssv6xxx_hci_ctrl *ctrl_hci)
+{
+    unsigned long flags;
+    u32 status;
+    if (ctrl_hci->isr_disable == true) {
+        wake_up_interruptible(&ctrl_hci->tx_wait_q);
+    } else {
+#ifdef CONFIG_SSV_TX_LOWTHRESHOLD
+        mutex_lock(&ctrl_hci->hci_mutex);
+#endif
+        spin_lock_irqsave(&ctrl_hci->int_lock, flags);
+        status = ctrl_hci->int_mask ;
+#ifdef CONFIG_SSV_TX_LOWTHRESHOLD
+        if ((ctrl_hci->int_mask & SSV6XXX_INT_RESOURCE_LOW) == 0) {
+            if (ctrl_hci->shi->if_ops->trigger_tx_rx == NULL) {
+                u32 regval;
+                ctrl_hci->int_mask |= SSV6XXX_INT_RESOURCE_LOW;
+                regval = ~ctrl_hci->int_mask;
+                spin_unlock_irqrestore(&ctrl_hci->int_lock, flags);
+                HCI_IRQ_SET_MASK(ctrl_hci, regval);
+                mutex_unlock(&ctrl_hci->hci_mutex);
+            } else {
+                ctrl_hci->int_status |= SSV6XXX_INT_RESOURCE_LOW;
+                smp_mb();
+                spin_unlock_irqrestore(&ctrl_hci->int_lock, flags);
+                mutex_unlock(&ctrl_hci->hci_mutex);
+                ctrl_hci->shi->if_ops->trigger_tx_rx(ctrl_hci->shi->dev);
+            }
+        } else {
+            spin_unlock_irqrestore(&ctrl_hci->int_lock, flags);
+            mutex_unlock(&ctrl_hci->hci_mutex);
+        }
+#else
+        {
+            u32 bitno;
+            bitno = ssv6xxx_hci_get_int_bitno(txqid);
+            if ((ctrl_hci->int_mask & BIT(bitno)) == 0) {
+                if (ctrl_hci->shi->if_ops->trigger_tx_rx == NULL) {
+                    queue_work(ctrl_hci->hci_work_queue,&ctrl_hci->hci_tx_work[txqid]);
+                } else {
+                    ctrl_hci->int_status |= BIT(bitno);
+                    smp_mb();
+                    ctrl_hci->shi->if_ops->trigger_tx_rx(ctrl_hci->shi->dev);
+                }
+            }
+        }
+        spin_unlock_irqrestore(&ctrl_hci->int_lock, flags);
+#endif
+    }
+}
 static int ssv6xxx_hci_usb_tx_handler(struct ssv6xxx_hci_ctrl *ctrl_hci, void *dev, int max_count, int *err);
 static int ssv6xxx_hci_irq_enable(struct ssv6xxx_hci_ctrl *ctrl_hci)
 {
@@ -524,8 +572,6 @@ static int ssv6xxx_hci_send_cmd(struct ssv6xxx_hci_ctrl *ctrl_hci, struct sk_buf
 static int ssv6xxx_hci_enqueue(struct ssv6xxx_hci_ctrl *ctrl_hci, struct sk_buff *skb, int txqid, u32 tx_flags)
 {
     struct ssv_hw_txq *hw_txq;
-    unsigned long flags;
-    u32 status;
     int qlen = 0;
     BUG_ON(txqid >= SSV_HW_TXQ_NUM || txqid < 0);
     if (txqid >= SSV_HW_TXQ_NUM || txqid < 0)
@@ -546,62 +592,8 @@ static int ssv6xxx_hci_enqueue(struct ssv6xxx_hci_ctrl *ctrl_hci, struct sk_buff
             );
         }
     }
- if (ctrl_hci->isr_disable == true) {
-  wake_up_interruptible(&ctrl_hci->tx_wait_q);
- } else {
- #ifdef CONFIG_SSV_TX_LOWTHRESHOLD
-     mutex_lock(&ctrl_hci->hci_mutex);
- #endif
-     spin_lock_irqsave(&ctrl_hci->int_lock, flags);
-     status = ctrl_hci->int_mask ;
- #ifdef CONFIG_SSV_TX_LOWTHRESHOLD
-     if ((ctrl_hci->int_mask & SSV6XXX_INT_RESOURCE_LOW) == 0)
-     {
-         if (ctrl_hci->shi->if_ops->trigger_tx_rx == NULL)
-         {
-             u32 regval;
-             ctrl_hci->int_mask |= SSV6XXX_INT_RESOURCE_LOW;
-             regval = ~ctrl_hci->int_mask;
-             spin_unlock_irqrestore(&ctrl_hci->int_lock, flags);
-             HCI_IRQ_SET_MASK(ctrl_hci, regval);
-             mutex_unlock(&ctrl_hci->hci_mutex);
-         }
-         else
-         {
-             ctrl_hci->int_status |= SSV6XXX_INT_RESOURCE_LOW;
-             smp_mb();
-             spin_unlock_irqrestore(&ctrl_hci->int_lock, flags);
-             mutex_unlock(&ctrl_hci->hci_mutex);
-             ctrl_hci->shi->if_ops->trigger_tx_rx(ctrl_hci->shi->dev);
-         }
-     }
-     else
-     {
-         spin_unlock_irqrestore(&ctrl_hci->int_lock, flags);
-         mutex_unlock(&ctrl_hci->hci_mutex);
-     }
- #else
-     {
-         u32 bitno;
-         bitno = ssv6xxx_hci_get_int_bitno(txqid);
-         if ((ctrl_hci->int_mask & BIT(bitno)) == 0)
-         {
-             if (ctrl_hci->shi->if_ops->trigger_tx_rx == NULL)
-             {
-                 queue_work(ctrl_hci->hci_work_queue,&ctrl_hci->hci_tx_work[txqid]);
-             }
-             else
-             {
-                 ctrl_hci->int_status |= BIT(bitno);
-                 smp_mb();
-                 ctrl_hci->shi->if_ops->trigger_tx_rx(ctrl_hci->shi->dev);
-             }
-          }
-     }
-     spin_unlock_irqrestore(&ctrl_hci->int_lock, flags);
- #endif
- }
- return qlen;
+    ssv6xxx_hci_trigger_tx(ctrl_hci);
+    return qlen;
 }
 static bool ssv6xxx_hci_is_txq_empty(struct ssv6xxx_hci_ctrl *ctrl_hci, int txqid)
 {
@@ -689,7 +681,8 @@ static int ssv6xxx_hci_txq_resume(struct ssv6xxx_hci_ctrl *hci_ctrl, u32 txq_mas
         hw_txq->paused = false;
     }
     mutex_unlock(&hci_ctrl->txq_mask_lock);
- return 0;
+    ssv6xxx_hci_trigger_tx(hci_ctrl);
+    return 0;
 }
 static int ssv6xxx_hci_force_xmit(struct ssv6xxx_hci_ctrl *hci_ctrl, struct ssv_hw_txq *hw_txq,
     int max_count, int *err, int free_tx_page)
@@ -836,8 +829,6 @@ static int _do_force_tx (struct ssv6xxx_hci_ctrl *hctl, int *err)
     for (q_num = (SSV_HW_TXQ_NUM - 1); q_num >= 0; q_num--)
     {
         hw_txq = &hctl->hw_txq[q_num];
-        if ((SSV_SC(hctl)->sc_flags & SC_OP_OFFCHAN) && (hw_txq->txq_no != 4))
-            continue;
         tx_count += handler(hctl, hw_txq, 999, err);
         if (*err < 0)
             break;
@@ -883,6 +874,7 @@ static int ssv6xxx_hci_xmit(struct ssv6xxx_hci_ctrl *hci_ctrl, struct ssv_hw_txq
      if ((phw_resource->free_tx_page < page_count) || (phw_resource->free_tx_id <= 0) || (phw_resource->max_tx_frame[hw_txq->txq_no] <= 0))
         {
       skb_queue_head(&hw_txq->qhead, skb);
+      udelay(1);
       break;
         }
      phw_resource->free_tx_page -= page_count;
@@ -972,12 +964,12 @@ retry_read:
         if (hci_used_id == SSV6XXX_ID_HCI_INPUT_QUEUE)
             goto retry_read;
 #endif
-  hw_resource.free_tx_page =
-      SSV6XXX_PAGE_TX_THRESHOLD(ctrl_hci) - txq_info2.tx_use_page;
-  hw_resource.free_tx_id = SSV6XXX_ID_TX_THRESHOLD(ctrl_hci) - txq_info2.tx_use_id;
-  hw_resource.max_tx_frame[4] = SSV6XXX_ID_MANAGER_QUEUE(ctrl_hci) - txq_info2.txq4_size;
+  hw_resource.free_tx_page =(int)
+      SSV6XXX_PAGE_TX_THRESHOLD(ctrl_hci) - (int)txq_info2.tx_use_page;
+  hw_resource.free_tx_id = (int) SSV6XXX_ID_TX_THRESHOLD(ctrl_hci) - (int)txq_info2.tx_use_id;
+  hw_resource.max_tx_frame[4] = (int)SSV6XXX_ID_MANAGER_QUEUE(ctrl_hci) - (int)txq_info2.txq4_size;
         if (hci_used_id != -1)
-            max_count = SSV6XXX_ID_HCI_INPUT_QUEUE - hci_used_id;
+            max_count = (int) SSV6XXX_ID_HCI_INPUT_QUEUE - (int)hci_used_id;
     }
     else
     {
@@ -999,18 +991,18 @@ retry_read:
             return 0;
         BUG_ON(SSV6XXX_PAGE_TX_THRESHOLD(ctrl_hci) < txq_info.tx_use_page);
         BUG_ON(SSV6XXX_ID_TX_THRESHOLD(ctrl_hci) < txq_info.tx_use_id);
-  hw_resource.free_tx_page = SSV6XXX_PAGE_TX_THRESHOLD(ctrl_hci) - txq_info.tx_use_page;
-  hw_resource.free_tx_id = SSV6XXX_ID_TX_THRESHOLD(ctrl_hci) - txq_info.tx_use_id;
+  hw_resource.free_tx_page = (int) SSV6XXX_PAGE_TX_THRESHOLD(ctrl_hci) - (int) txq_info.tx_use_page;
+  hw_resource.free_tx_id = (int) SSV6XXX_ID_TX_THRESHOLD(ctrl_hci) - (int) txq_info.tx_use_id;
   hw_resource.max_tx_frame[0] =
-      SSV6XXX_ID_AC_BK_OUT_QUEUE(ctrl_hci) - txq_info.txq0_size;
+      (int) SSV6XXX_ID_AC_BK_OUT_QUEUE(ctrl_hci) - (int)txq_info.txq0_size;
   hw_resource.max_tx_frame[1] =
-      SSV6XXX_ID_AC_BE_OUT_QUEUE(ctrl_hci) - txq_info.txq1_size;
+      (int)SSV6XXX_ID_AC_BE_OUT_QUEUE(ctrl_hci) - (int)txq_info.txq1_size;
   hw_resource.max_tx_frame[2] =
-      SSV6XXX_ID_AC_VI_OUT_QUEUE(ctrl_hci) - txq_info.txq2_size;
+      (int)SSV6XXX_ID_AC_VI_OUT_QUEUE(ctrl_hci) - (int)txq_info.txq2_size;
   hw_resource.max_tx_frame[3] =
-      SSV6XXX_ID_AC_VO_OUT_QUEUE(ctrl_hci) - txq_info.txq3_size;
+      (int)SSV6XXX_ID_AC_VO_OUT_QUEUE(ctrl_hci) - (int)txq_info.txq3_size;
         if (hci_used_id != -1)
-            max_count = SSV6XXX_ID_HCI_INPUT_QUEUE - hci_used_id;
+            max_count = (int)SSV6XXX_ID_HCI_INPUT_QUEUE - (int)hci_used_id;
  }
  {
 #ifdef CONFIG_IRQ_DEBUG_COUNT
@@ -1110,19 +1102,19 @@ retry_read:
             *err = -EIO;
             return 0;
         }
-  hw_resource.free_tx_page = SSV6XXX_PAGE_TX_THRESHOLD(ctrl_hci) - txq_info.tx_use_page;
-  hw_resource.free_tx_id = SSV6XXX_ID_TX_THRESHOLD(ctrl_hci) - txq_info.tx_use_id;
-  hw_resource.max_tx_frame[0] =
-      SSV6XXX_ID_USB_AC_BK_OUT_QUEUE(ctrl_hci) - txq_info.txq0_size;
-  hw_resource.max_tx_frame[1] =
-      SSV6XXX_ID_USB_AC_BE_OUT_QUEUE(ctrl_hci) - txq_info.txq1_size;
-  hw_resource.max_tx_frame[2] =
-      SSV6XXX_ID_USB_AC_VI_OUT_QUEUE(ctrl_hci) - txq_info.txq2_size;
-  hw_resource.max_tx_frame[3] =
-      SSV6XXX_ID_USB_AC_VO_OUT_QUEUE(ctrl_hci) - txq_info.txq3_size;
-        if (hci_used_id != -1) {
-            max_count = SSV6XXX_ID_HCI_INPUT_QUEUE - hci_used_id;
-        }
+  hw_resource.free_tx_page = (int) SSV6XXX_PAGE_TX_THRESHOLD(ctrl_hci) - (int)txq_info.tx_use_page;
+  hw_resource.free_tx_id = (int) SSV6XXX_ID_TX_THRESHOLD(ctrl_hci) - (int) txq_info.tx_use_id;
+  hw_resource.max_tx_frame[0] =(int)
+      SSV6XXX_ID_USB_AC_BK_OUT_QUEUE(ctrl_hci) - (int)txq_info.txq0_size;
+  hw_resource.max_tx_frame[1] =(int)
+      SSV6XXX_ID_USB_AC_BE_OUT_QUEUE(ctrl_hci) - (int)txq_info.txq1_size;
+  hw_resource.max_tx_frame[2] =(int)
+      SSV6XXX_ID_USB_AC_VI_OUT_QUEUE(ctrl_hci) - (int)txq_info.txq2_size;
+  hw_resource.max_tx_frame[3] =(int)
+      SSV6XXX_ID_USB_AC_VO_OUT_QUEUE(ctrl_hci) - (int)txq_info.txq3_size;
+        if (hci_used_id != -1){
+            max_count = (int)SSV6XXX_ID_HCI_INPUT_QUEUE - (int)hci_used_id;
+	}
             if (hw_resource.max_tx_frame[3] < 0) {
                 *err = -EIO;
                 return 0;
@@ -1426,7 +1418,7 @@ struct file_operations hw_txq_len_fops = {
     .open = hw_txq_len_open,
     .read = hw_txq_len_read,
 };
-bool ssv6xxx_hci_init_debugfs(struct ssv6xxx_hci_ctrl *ctrl_hci, struct dentry *dev_deugfs_dir)
+bool tu_ssv6xxx_hci_init_debugfs(struct ssv6xxx_hci_ctrl *ctrl_hci, struct dentry *dev_deugfs_dir)
 {
     ctrl_hci->debugfs_dir = debugfs_create_dir("hci", dev_deugfs_dir);
     if (ctrl_hci->debugfs_dir == NULL)
@@ -1484,12 +1476,22 @@ static int _isr_do_rx (struct ssv6xxx_hci_ctrl *hctl, u32 isr_status)
     }
     return retval;
 }
+static bool ssv6xxx_hci_is_frame_send(struct ssv6xxx_hci_ctrl *hci_ctrl)
+{
+    int q_num;
+    struct ssv_hw_txq *hw_txq;
+    for (q_num = (SSV_HW_TXQ_NUM - 1); q_num >= 0; q_num--) {
+        hw_txq = &hci_ctrl->hw_txq[q_num];
+        if (!hw_txq->paused && !ssv6xxx_hci_is_txq_empty(hci_ctrl, q_num))
+            return true;
+    }
+    return false;
+}
 #ifdef CONFIG_SSV_TX_LOWTHRESHOLD
 static int _do_tx (struct ssv6xxx_hci_ctrl *hctl, u32 status)
 {
     int q_num;
     int tx_count = 0;
-    u32 to_disable_int = 1;
     unsigned long flags;
     struct ssv_hw_txq *hw_txq;
     #ifdef CONFIG_SSV6XXX_DEBUGFS
@@ -1542,19 +1544,10 @@ static int _do_tx (struct ssv6xxx_hci_ctrl *hctl, u32 status)
     }
     mutex_lock(&hctl->hci_mutex);
     spin_lock_irqsave(&hctl->int_lock, flags);
-    for (q_num = (SSV_HW_TXQ_NUM - 1); q_num >= 0; q_num--)
-    {
-        hw_txq = &hctl->hw_txq[q_num];
-        if (skb_queue_len(&hw_txq->qhead) > 0)
-        {
-            to_disable_int = 0;
-            break;
-        }
-    }
-    if (to_disable_int)
+    if (!ssv6xxx_hci_is_frame_send(hctl))
     {
         u32 reg_val;
-        hctl->int_mask &= ~(SSV6XXX_INT_RESOURCE_LOW | SSV6XXX_INT_TX);
+        hctl->int_mask &= ~SSV6XXX_INT_RESOURCE_LOW;
         reg_val = ~hctl->int_mask;
         spin_unlock_irqrestore(&hctl->int_lock, flags);
         HCI_IRQ_SET_MASK(hctl, reg_val);
@@ -1710,25 +1703,34 @@ irqreturn_t ssv6xxx_hci_isr(int irq, void *args)
         spin_unlock_irqrestore(&hctl->int_lock, flags);
         mutex_unlock(&hctl->hci_mutex);
         hctl->isr_running = 1;
+#ifdef CONFIG_SSV_TX_LOWTHRESHOLD
+        if (status & SSV6XXX_INT_RESOURCE_LOW) {
+#else
+        if (status & (SSV6XXX_INT_TX|SSV6XXX_INT_LOW_EDCA_0|SSV6XXX_INT_LOW_EDCA_1|SSV6XXX_INT_LOW_EDCA_2|SSV6XXX_INT_LOW_EDCA_3)) {
+#endif
+            ret = _do_tx(hctl, status);
+            if (ret > 0)
+            {
+                dbg_isr_miss = false;
+            } else if (ret < 0) {
+                isr_reset = true;
+                hctl->isr_running = 0;
+                break;
+            }
+        }
         if (status & SSV6XXX_INT_RX) {
             ret = _isr_do_rx(hctl, status);
             if (ret < 0) {
-    isr_reset = true;
-          hctl->isr_running = 0;
-    HCI_DBG_PRINT(hctl, "do_rx failed\n");
+                isr_reset = true;
+                hctl->isr_running = 0;
+                HCI_DBG_PRINT(hctl, "do_rx failed\n");
                 break;
             }
             dbg_isr_miss = false;
-        }
-        ret = _do_tx(hctl, status);
-        if (ret > 0)
-        {
-            dbg_isr_miss = false;
-        } else if (ret < 0) {
-   isr_reset = true;
-         hctl->isr_running = 0;
+        } else {
+            hctl->isr_running = 0;
             break;
-  }
+        }
         hctl->isr_running = 0;
 #ifdef CONFIG_SSV6XXX_DEBUGFS
         if (hctl->isr_mib_enable)
@@ -1749,27 +1751,16 @@ irqreturn_t ssv6xxx_hci_isr(int irq, void *args)
      queue_work(hctl->hci_work_queue, &hctl->isr_reset_work);
     return ret;
 }
-static bool ssv6xxx_hci_is_frame_send(struct ssv6xxx_hci_ctrl *hci_ctrl)
-{
- int q_num;
- for (q_num = (SSV_HW_TXQ_NUM - 1); q_num >= 0; q_num--) {
-  if (!ssv6xxx_hci_is_txq_empty(hci_ctrl, q_num))
-   return true;
- }
- return false;
-}
 static int ssv6xxx_hci_tx_task (void *data)
 {
 #define MAX_HCI_TX_TASK_SEND_FAIL 3
  struct ssv6xxx_hci_ctrl *hctl = (struct ssv6xxx_hci_ctrl *)data;
  unsigned long wait_period = msecs_to_jiffies(200);
  int err = 0, err_cnt = 0;
- unsigned int rt_prio = (ssv_tx_task_prio > 99)?99:((ssv_tx_task_prio < 1)?1:ssv_tx_task_prio);
- struct sched_param param = { .sched_priority = rt_prio };
- sched_setscheduler(current, SCHED_RR, &param);
+ txrxboost_init();
+ printk("SSV6XXX HCI TX Task started.\n");
  while (!kthread_should_stop())
  {
-  set_current_state(TASK_INTERRUPTIBLE);
   wait_event_interruptible_timeout(hctl->tx_wait_q,
          ( kthread_should_stop()
          || ssv6xxx_hci_is_frame_send(hctl)),
@@ -1780,39 +1771,30 @@ static int ssv6xxx_hci_tx_task (void *data)
    HCI_DBG_PRINT(hctl, "Quit HCI TX task loop...\n");
    break;
   }
-  set_current_state(TASK_RUNNING);
+    txrxboost_change((u32)atomic_read(&SSV_SC(hctl)->ampdu_tx_frame),
+   SSV_SC(hctl)->sh->cfg.txrxboost_low_threshold,
+   SSV_SC(hctl)->sh->cfg.txrxboost_high_threshold,
+   SSV_SC(hctl)->sh->cfg.txrxboost_prio);
         if ((hctl->hci_flags & SSV6XXX_HCI_OP_INVALID) ||
             (hctl->hci_flags & SSV6XXX_HCI_OP_IFERR) ||
             (err_cnt > MAX_HCI_TX_TASK_SEND_FAIL)) {
-                ssv6xxx_hci_txq_flush(hctl, (TXQ_EDCA_0|TXQ_EDCA_1|TXQ_EDCA_2|TXQ_EDCA_3|TXQ_MGMT));
+				ssv6xxx_hci_txq_flush(hctl, (TXQ_EDCA_0|TXQ_EDCA_1|TXQ_EDCA_2|TXQ_EDCA_3|TXQ_MGMT));
+                //ssv6xxx_hci_txq_flush(hctl, (TXQ_EDCA_0|TXQ_EDCA_1|TXQ_EDCA_2|TXQ_EDCA_3|TXQ_MGMT));
+                err_cnt = 0;
         } else {
-      err = 0;
-            err_cnt = 0;
-      while (ssv6xxx_hci_is_frame_send(hctl))
-      {
-       _do_force_tx(hctl, &err);
+            if (ssv6xxx_hci_is_frame_send(hctl))
+            {
+                err = 0;
+                _do_force_tx(hctl, &err);
                 if ((err < 0) && (err != -1)) {
                     err_cnt++;
-                    if (err_cnt > 3)
-                        break;
-        break;
-       } else if (err == -1) {
+                } else if (err == -1) {
                     hctl->hci_flags |= SSV6XXX_HCI_OP_IFERR;
-        break;
-       } else if (err > 0) {
-                    break;
-                } else {
-                    if (kthread_should_stop())
-                    {
-                        hctl->hci_tx_task = NULL;
-                        HCI_DBG_PRINT(hctl, "Quit HCI TX task loop...\n");
-                        break;
-                    }
                 }
-      }
+            }
         }
- }
- return 0;
+    }
+    return 0;
 }
 static struct ssv6xxx_hci_ops hci_ops =
 {
@@ -1837,12 +1819,14 @@ static struct ssv6xxx_hci_ops hci_ops =
     .hci_pmu_wakeup = ssv6xxx_hci_pmu_wakeup,
     .hci_send_cmd = ssv6xxx_hci_send_cmd,
     .hci_write_sram = ssv6xxx_hci_write_sram,
-    .hci_init_debugfs = ssv6xxx_hci_init_debugfs,
+#ifdef CONFIG_SSV6XXX_DEBUGFS
+    .hci_init_debugfs = tu_ssv6xxx_hci_init_debugfs,
     .hci_deinit_debugfs = ssv6xxx_hci_deinit_debugfs,
+#endif
     .hci_interface_reset = ssv6xxx_hci_interface_reset,
     .hci_sysplf_reset = ssv6xxx_hci_sysplf_reset,
 };
-int ssv6xxx_hci_deregister(struct ssv6xxx_hci_info *shi)
+int tu_ssv6xxx_hci_deregister(struct ssv6xxx_hci_info *shi)
 {
     u32 regval;
     struct ssv6xxx_hci_ctrl *hci_ctrl;
@@ -1863,12 +1847,15 @@ int ssv6xxx_hci_deregister(struct ssv6xxx_hci_info *shi)
   hci_ctrl->hci_tx_task = NULL;
   printk("Stopped HCI TX task.\n");
  }
+ if (hci_ctrl->rx_buf != NULL){ 
+    dev_kfree_skb_any(hci_ctrl->rx_buf);
+ }
  shi->hci_ctrl = NULL;
  kfree(hci_ctrl);
     return 0;
 }
-EXPORT_SYMBOL(ssv6xxx_hci_deregister);
-int ssv6xxx_hci_register(struct ssv6xxx_hci_info *shi)
+EXPORT_SYMBOL(tu_ssv6xxx_hci_deregister);
+int tu_ssv6xxx_hci_register(struct ssv6xxx_hci_info *shi)
 {
     int i, capability;
     struct ssv6xxx_hci_ctrl *hci_ctrl;
@@ -1937,7 +1924,7 @@ int ssv6xxx_hci_register(struct ssv6xxx_hci_info *shi)
    hci_ctrl->isr_disable = true;
    init_waitqueue_head(&hci_ctrl->tx_wait_q);
    hci_ctrl->hci_tx_task = kthread_run(ssv6xxx_hci_tx_task, hci_ctrl, "ssv6xxx_hci_tx_task");
-   HCI_RX_TASK(hci_ctrl, hci_ctrl->shi->hci_rx_cb, (void *)(SSV_SC(hci_ctrl)), &hci_ctrl->rx_pkt);
+   HCI_RX_TASK(hci_ctrl, hci_ctrl->shi->hci_rx_cb, hci_ctrl->shi->hci_is_rx_q_full, (void *)(SSV_SC(hci_ctrl)), &hci_ctrl->rx_pkt);
    break;
   default:
             printk("Detect unknown hardware capability\n");
@@ -1956,11 +1943,11 @@ int ssv6xxx_hci_register(struct ssv6xxx_hci_info *shi)
     #endif
     return 0;
 }
-EXPORT_SYMBOL(ssv6xxx_hci_register);
+EXPORT_SYMBOL(tu_ssv6xxx_hci_register);
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
-int ssv6xxx_hci_init(void)
+int tu_ssv6xxx_hci_init(void)
 #else
-static int __init ssv6xxx_hci_init(void)
+int __init tu_ssv6xxx_hci_init(void)
 #endif
 {
 #ifdef CONFIG_SSV6200_CLI_ENABLE
@@ -1970,9 +1957,9 @@ static int __init ssv6xxx_hci_init(void)
     return 0;
 }
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
-void ssv6xxx_hci_exit(void)
+void tu_ssv6xxx_hci_exit(void)
 #else
-static void __exit ssv6xxx_hci_exit(void)
+void __exit tu_ssv6xxx_hci_exit(void)
 #endif
 {
 #ifdef CONFIG_SSV6200_CLI_ENABLE
@@ -1980,7 +1967,10 @@ static void __exit ssv6xxx_hci_exit(void)
 #ifdef CONFIG_SSV6200_CLI_ENABLE
 #endif
 }
-#if (!defined(CONFIG_SSV_SUPPORT_ANDROID) && !defined(CONFIG_SSV_BUILD_AS_ONE_KO))
-module_init(ssv6xxx_hci_init);
-module_exit(ssv6xxx_hci_exit);
+#if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
+EXPORT_SYMBOL(tu_ssv6xxx_hci_init);
+EXPORT_SYMBOL(tu_ssv6xxx_hci_exit);
+#else
+module_init(tu_ssv6xxx_hci_init);
+module_exit(tu_ssv6xxx_hci_exit);
 #endif

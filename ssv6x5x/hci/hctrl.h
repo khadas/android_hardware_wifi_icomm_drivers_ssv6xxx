@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -97,6 +96,7 @@ struct ssv6xxx_hci_ctrl {
  u32 isr_rx_io_count;
  u32 isr_tx_io_count;
  long long isr_rx_proc_time;
+#endif
 #ifdef CONFIG_IRQ_DEBUG_COUNT
     bool irq_enable;
     u32 irq_count;
@@ -106,7 +106,6 @@ struct ssv6xxx_hci_ctrl {
     u32 rx_irq_count;
     u32 irq_rx_pkt_count;
     u32 irq_tx_pkt_count;
-#endif
 #endif
  struct ssv6xxx_tx_hw_info tx_info;
  struct ssv6xxx_rx_hw_info rx_info;
@@ -127,8 +126,8 @@ struct ssv6xxx_hci_txq_info2 {
 };
 struct ssv6xxx_hw_resource
 {
- u32 free_tx_page;
- u32 free_tx_id;
+ int free_tx_page;
+ int free_tx_id;
  int max_tx_frame[SSV_HW_TXQ_NUM];
 };
 static inline void ssv6xxx_hwif_irq_request(struct ssv6xxx_hci_ctrl *hctrl, irq_handler_t irq_handler)
@@ -197,14 +196,14 @@ static inline void ssv6xxx_hwif_load_fw_post_config_device(struct ssv6xxx_hci_ct
 }
 #if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
 static inline void ssv6xxx_hwif_rx_task(struct ssv6xxx_hci_ctrl *hctrl, int (*rx_cb)(struct sk_buff_head *rxq, void *args),
-     void *args, u32 *pkt)
+     int (*is_rx_q_full)(void *args), void *args, u32 *pkt)
 #else
 static inline void ssv6xxx_hwif_rx_task(struct ssv6xxx_hci_ctrl *hctrl, int (*rx_cb)(struct sk_buff *rx_skb, void *args),
-     void *args, u32 *pkt)
+     int (*is_rx_q_full)(void *args), void *args, u32 *pkt)
 #endif
 {
  if(hctrl->shi->if_ops->hwif_rx_task)
-  hctrl->shi->if_ops->hwif_rx_task(IFDEV(hctrl), rx_cb, args, pkt);
+  hctrl->shi->if_ops->hwif_rx_task(IFDEV(hctrl), rx_cb, is_rx_q_full, args, pkt);
 }
 static inline void ssv6xxx_hwif_interface_reset(struct ssv6xxx_hci_ctrl *hctrl)
 {
@@ -246,7 +245,7 @@ static inline void ssv6xxx_hwif_sysplf_reset(struct ssv6xxx_hci_ctrl *hctrl, u32
 #define HCI_HWIF_PROPERTY(ct) ssv6xxx_hwif_property(ct)
 #define HCI_LOAD_FW_PRE_CONFIG_DEVICE(ct) ssv6xxx_hwif_load_fw_pre_config_device(ct)
 #define HCI_LOAD_FW_POST_CONFIG_DEVICE(ct) ssv6xxx_hwif_load_fw_post_config_device(ct)
-#define HCI_RX_TASK(ct,hdle,args,pkt) ssv6xxx_hwif_rx_task(ct, hdle, args, pkt)
+#define HCI_RX_TASK(ct,rx_cb,is_rx_q_full,args,pkt) ssv6xxx_hwif_rx_task(ct, rx_cb, is_rx_q_full, args, pkt)
 #define HCI_IFC_RESET(ct) ssv6xxx_hwif_interface_reset(ct)
 #define HCI_START_USB_ACC(ct,epnum) ssv6xxx_hwif_start_usb_acc(ct, epnum)
 #define HCI_STOP_USB_ACC(ct,epnum) ssv6xxx_hwif_stop_usb_acc(ct, epnum)

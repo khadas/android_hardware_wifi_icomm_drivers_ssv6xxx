@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -14,10 +13,15 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <net/cfg80211.h>
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #include <linux/etherdevice.h>
 #include "wapi_sms4.h"
 #include "sec_wpi.h"

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -28,10 +27,18 @@ enum efuse_data_item {
    EFUSE_MAC,
    EFUSE_CRYSTAL_FREQUENCY_OFFSET,
    EFUSE_TX_POWER_INDEX_1,
-   EFUSE_TX_POWER_INDEX_2
+   EFUSE_TX_POWER_INDEX_2,
+   EFUSE_CHIP_ID,
+   NO_USE,
+   EFUSE_VID,
+   EFUSE_PID,
+   EFUSE_MAC_NEW,
+   EFUSE_RATE_TABLE_1,
+   EFUSE_RATE_TABLE_2
 };
 #ifdef SSV_SUPPORT_HAL
 #define SSV_READ_EFUSE(_sh,_table) HAL_READ_EFUSE(_sh, _table)
+#define SSV_WRITE_EFUSE(_sh,_pbuf,_len) HAL_WRITE_EFUSE(_sh, _pbuf, _len)
 #else
 #define EFUSE_HWSET_MAX_SIZE (256-32)
 #define EFUSE_MAX_SECTION_MAP (EFUSE_HWSET_MAX_SIZE>>5)
@@ -39,7 +46,11 @@ enum efuse_data_item {
 #define SSV_EFUSE_ID_RAW_DATA_BASE 0xC200014C
 #define SSV_EFUSE_READ_SWITCH 0xC200012C
 #define SSV_EFUSE_RAW_DATA_BASE 0xC2000150
+u8 read_efuse(struct ssv_hw *sh, u8 *pbuf);
+void write_efuse(struct ssv_hw *sh, u8 *data, u8 data_length);
 #define SSV_READ_EFUSE(_sh,_table) read_efuse(_sh, _table)
+#define SSV_WRITE_EFUSE(_sh,_data,_len) write_efuse(_sh, _data, _len)
 #endif
+u16 parser_efuse(struct ssv_hw *sh, u8 *pbuf, u8 *mac_addr, u8 *new_mac_addr, struct efuse_map *efuse_tbl);
 void efuse_read_all_map(struct ssv_hw *sh);
 #endif

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -34,6 +33,7 @@ struct SKB_info_st
     volatile u8 crypt_st;
 #endif
     bool directly_ack;
+	bool no_update_rpt;
 };
 typedef struct SKB_info_st SKB_info;
 typedef struct SKB_info_st *p_SKB_info;

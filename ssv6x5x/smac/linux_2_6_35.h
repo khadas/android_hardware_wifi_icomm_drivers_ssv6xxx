@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -16,7 +15,11 @@
 
 #ifndef _LINUX_2_6_35_H_
 #define _LINUX_2_6_35_H_ 
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 enum ieee80211_ac_numbers {
  IEEE80211_AC_VO = 0,
  IEEE80211_AC_VI = 1,

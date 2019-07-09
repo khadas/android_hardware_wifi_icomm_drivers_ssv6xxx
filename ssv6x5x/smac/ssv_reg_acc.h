@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -19,6 +18,8 @@
 #define SMAC_REG_WRITE(_s,_r,_v) \
         ({ \
             typeof(_s) __s = _s; \
+            if ( _s->sc->log_ctrl & LOG_REGW) \
+                printk("w a:0x%x d:0x%x\n", _r ,_v); \
             __s->hci.hci_ops->hci_write_word(__s->hci.hci_ctrl, _r,_v); \
         })
 #define SMAC_REG_READ(_s,_r,_v) \

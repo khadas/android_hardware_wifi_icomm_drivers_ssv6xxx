@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -30,7 +29,7 @@
 #include <smac/dev.h>
 #include <smac/init.h>
 #include "ssv6xxx_netlink_core.h"
-static char *attach_driver_name = "SSV WLAN driver";
+static char *attach_driver_name = "TU SSV WLAN driver";
 module_param(attach_driver_name, charp, S_IRUGO|S_IWUSR);
 static char *attach_device_name = "SSV6XXX";
 module_param(attach_device_name, charp, S_IRUGO|S_IWUSR);
@@ -295,9 +294,14 @@ static int __init ssv_netlink_init(void)
  rc = ssv6xxx_umac_attach(attach_driver_name, attach_device_name, &ssv_umac);
  if (rc != 0)
   return -1;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0)
+ rc = genl_register_family_with_ops(&ssv_wireless_gnl_family,
+  ssv_wireless_gnl_ops);
+#else
  rc = genl_register_family_with_ops(&ssv_wireless_gnl_family,
   ssv_wireless_gnl_ops, ARRAY_SIZE(ssv_wireless_gnl_ops));
- if (rc != 0) {
+#endif
+    if (rc != 0) {
   printk("Fail to insert SSV WIRELESS NETLINK MODULE\n");
   return -1;
  }
@@ -316,6 +320,6 @@ static void __exit ssv_netlink_exit(void)
 }
 module_init(ssv_netlink_init);
 module_exit(ssv_netlink_exit);
-MODULE_AUTHOR("iComm Semiconductor Co., Ltd");
+MODULE_AUTHOR("iComm-semi, Ltd");
 MODULE_DESCRIPTION("Support for SSV6xxx wireless LAN cards.");
 MODULE_LICENSE("Dual BSD/GPL");

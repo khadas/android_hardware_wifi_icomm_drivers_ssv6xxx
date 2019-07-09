@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -18,7 +17,11 @@
 #define SEC_H 
 #include <linux/types.h>
 #include <linux/ieee80211.h>
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #define CCMP_TK_LEN 16
 #define TKIP_KEY_LEN 32
 #define WEP_KEY_LEN 13

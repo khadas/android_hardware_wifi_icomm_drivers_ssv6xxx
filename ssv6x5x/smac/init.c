@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -56,7 +55,7 @@
 #include <linux/cpu.h>
 #include <linux/notifier.h>
 #endif
-MODULE_AUTHOR("iComm Semiconductor Co., Ltd");
+MODULE_AUTHOR("iComm-semi, Ltd");
 MODULE_DESCRIPTION("Support for SSV6xxx wireless LAN cards.");
 MODULE_SUPPORTED_DEVICE("SSV6xxx 802.11n WLAN cards");
 MODULE_LICENSE("Dual BSD/GPL");
@@ -104,7 +103,8 @@ ssv6xxx_iface_combinations_p2p[] = {
     .hw_value = (_hw_rate), \
     .hw_value_short = SHPCHECK(_hw_rate,_flags) \
 }
-extern struct ssv6xxx_cfg ssv_cfg;
+extern struct ssv6xxx_cfg tu_ssv_cfg;
+static void ssv6xxx_stop_all_running_threads(struct ssv_softc *sc) ;
 static const struct ieee80211_channel ssv6200_2ghz_chantable[] =
 {
     CHAN2G(2412, 1 ),
@@ -142,12 +142,31 @@ static struct ieee80211_channel ssv6200_5ghz_chantable[] = {
  CHAN5G(5660, 132),
  CHAN5G(5680, 136),
  CHAN5G(5700, 140),
+ CHAN5G(5720, 144),
  CHAN5G(5745, 149),
  CHAN5G(5765, 153),
  CHAN5G(5785, 157),
  CHAN5G(5805, 161),
  CHAN5G(5825, 165),
 };
+
+static struct ieee80211_channel ssv6200_5ghz_chantable_no_midband[] = {
+ CHAN5G(5180, 36),
+ CHAN5G(5200, 40),
+ CHAN5G(5220, 44),
+ CHAN5G(5240, 48),
+ CHAN5G(5260, 52),
+ CHAN5G(5280, 56),
+ CHAN5G(5300, 60),
+ CHAN5G(5320, 64),
+ CHAN5G(5745, 149),
+ CHAN5G(5765, 153),
+ CHAN5G(5785, 157),
+ CHAN5G(5805, 161),
+ CHAN5G(5825, 165),
+};
+
+
 static struct ieee80211_rate ssv6200_legacy_rates[] =
 {
     RATE(10, 0x00, 0),
@@ -498,7 +517,7 @@ static void ssv6xxx_preload_sw_cipher(void)
  }
 #endif
 }
-static int ssv6xxx_init_softc(struct ssv_softc *sc)
+static int tu_ssv6xxx_init_softc(struct ssv_softc *sc)
 {
     void *channels;
     int ret=0;
@@ -544,9 +563,64 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
  skb_queue_head_init(&sc->bcast_txq.qhead);
  spin_lock_init(&sc->ps_state_lock);
  spin_lock_init(&sc->tx_pkt_run_no_lock);
+ init_rwsem(&sc->sta_info_sem);
 #ifdef CONFIG_P2P_NOA
  spin_lock_init(&sc->p2p_noa.p2p_config_lock);
 #endif
+
+#ifdef CONFIG_SSV_CUSTOM_DOMAIN
+ if (sc->sh->cfg.hw_caps & SSV6200_HW_CAP_2GHZ) {
+       u32 domain_2ghz_channels_size = 0;
+       channels = kmalloc(sizeof(ssv6200_2ghz_chantable), GFP_KERNEL);
+    if (!channels) {
+     goto err_create_channel_list;
+          }
+     printk(" sc->sh->cfg.domain = %d\n", sc->sh->cfg.domain);
+     switch (sc->sh->cfg.domain)
+     {
+        case DOMAIN_FCC: // 2.412 ~ 2.462 GHz, 11 channels
+        case DOMAIN_North_America:
+        case DOMAIN_Taiwan:
+           domain_2ghz_channels_size = 11;
+           memcpy(channels, &(ssv6200_2ghz_chantable[0]), sizeof(struct ieee80211_channel) * domain_2ghz_channels_size);
+           break;
+           
+        case DOMAIN_china: // 2.412 ~ 2.472 GHz, 13 channels
+        case DOMAIN_Singapore:
+        case DOMAIN_ETSI:
+           domain_2ghz_channels_size = 13;
+           memcpy(channels, &(ssv6200_2ghz_chantable[0]), sizeof(struct ieee80211_channel) * domain_2ghz_channels_size);
+           break;
+           
+        case DOMAIN_Japan: // 2.412 ~ 2.484 GHz, 14 channels
+        case DOMAIN_Japan2:
+        case DOMAIN_Korea:
+            domain_2ghz_channels_size = 14;
+            memcpy(channels, &(ssv6200_2ghz_chantable[0]), sizeof(struct ieee80211_channel) * domain_2ghz_channels_size);
+            break;
+           
+        case DOMAIN_Israel: // 2.432 ~ 2.472 GHz, 9 channels
+           domain_2ghz_channels_size = 9;
+           memcpy(channels, &(ssv6200_2ghz_chantable[4]), sizeof(struct ieee80211_channel) * domain_2ghz_channels_size);
+           break;
+           
+        default: // 2.412 ~ 2.484 GHz, 14 channels
+           domain_2ghz_channels_size = 14;
+           memcpy(channels, &(ssv6200_2ghz_chantable[0]), sizeof(struct ieee80211_channel) * domain_2ghz_channels_size);
+           break;
+        }
+           
+       sc->sbands[INDEX_80211_BAND_2GHZ].channels = channels;
+       sc->sbands[INDEX_80211_BAND_2GHZ].band = INDEX_80211_BAND_2GHZ;
+       sc->sbands[INDEX_80211_BAND_2GHZ].n_channels = domain_2ghz_channels_size;
+       sc->sbands[INDEX_80211_BAND_2GHZ].bitrates = ssv6200_legacy_rates;
+       sc->sbands[INDEX_80211_BAND_2GHZ].n_bitrates =
+        ARRAY_SIZE(ssv6200_legacy_rates);
+ }
+#else
+
+
+
  if (sc->sh->cfg.hw_caps & SSV6200_HW_CAP_2GHZ) {
         channels = kmemdup(ssv6200_2ghz_chantable,
    sizeof(ssv6200_2ghz_chantable), GFP_KERNEL);
@@ -561,6 +635,46 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
   sc->sbands[INDEX_80211_BAND_2GHZ].n_bitrates =
    ARRAY_SIZE(ssv6200_legacy_rates);
  }
+#endif
+
+#ifdef CONFIG_SSV_CUSTOM_DOMAIN
+ if (sc->sh->cfg.hw_caps & SSV6200_HW_CAP_5GHZ) {
+       u32 domain_5ghz_channels_size = 0;
+       channels = kmalloc(sizeof(ssv6200_5ghz_chantable), GFP_KERNEL);
+    if (!channels) {
+     goto err_create_channel_list;
+          }
+     switch (sc->sh->cfg.domain)
+     {
+        case DOMAIN_FCC: 
+        case DOMAIN_North_America: 
+		case DOMAIN_Taiwan:
+           domain_5ghz_channels_size = 25;
+           memcpy(channels, &(ssv6200_5ghz_chantable[0]), sizeof(struct ieee80211_channel) * domain_5ghz_channels_size);
+     	   break;   
+        case DOMAIN_Singapore:    
+        case DOMAIN_china: 
+		case DOMAIN_ETSI:
+           domain_5ghz_channels_size = 13;
+           memcpy(channels, &(ssv6200_5ghz_chantable_no_midband[0]), sizeof(struct ieee80211_channel) * domain_5ghz_channels_size);
+           break;
+        default:
+           domain_5ghz_channels_size = 25;
+           memcpy(channels, &(ssv6200_5ghz_chantable[0]), sizeof(struct ieee80211_channel) * domain_5ghz_channels_size);
+           break;
+        }
+           
+       sc->sbands[INDEX_80211_BAND_5GHZ].channels = channels;
+       sc->sbands[INDEX_80211_BAND_5GHZ].band = INDEX_80211_BAND_2GHZ;
+       sc->sbands[INDEX_80211_BAND_5GHZ].n_channels =
+        domain_5ghz_channels_size;
+       sc->sbands[INDEX_80211_BAND_5GHZ].bitrates = ssv6200_legacy_rates + 4;
+       sc->sbands[INDEX_80211_BAND_5GHZ].n_bitrates =
+        ARRAY_SIZE(ssv6200_legacy_rates) - 4;
+ }
+#else
+
+
  if (sc->sh->cfg.hw_caps & SSV6200_HW_CAP_5GHZ) {
         channels = kmemdup(ssv6200_5ghz_chantable,
    sizeof(ssv6200_5ghz_chantable), GFP_KERNEL);
@@ -575,6 +689,8 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
   sc->sbands[INDEX_80211_BAND_5GHZ].n_bitrates =
    ARRAY_SIZE(ssv6200_legacy_rates) - 4 ;
  }
+
+#endif
  sc->cur_channel = NULL;
  sc->hw_chan = (-1);
  skb_queue_head_init(&sc->rc_report_queue);
@@ -635,7 +751,9 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
     sc->rx_wait_q_woken = 0;
     skb_queue_head_init(&sc->rx_skb_q);
     sc->rx_task = kthread_run(ssv6xxx_rx_task, sc, "ssv6xxx_rx_task");
-    ssv6xxx_preload_sw_cipher();
+    if (SSV_NEED_SW_CIPHER(sc->sh)){
+        ssv6xxx_preload_sw_cipher();
+    }
     init_waitqueue_head(&sc->fw_wait_q);
  sc->log_ctrl = LOG_HWIF;
  sc->sh->priv->dbg_control = true;
@@ -651,7 +769,12 @@ static int ssv6xxx_init_softc(struct ssv_softc *sc)
     INIT_WORK(&sc->rx_stuck_work, ssv6xxx_rx_stuck_process);
     INIT_WORK(&sc->mib_edca_work, ssv6xxx_mib_edca_process);
     INIT_WORK(&sc->tx_poll_work, ssv6xxx_tx_poll_process);
+#ifdef CONFIG_SSV_CCI_IMPROVEMENT
     INIT_WORK(&sc->cci_clean_work, ssv6xxx_cci_clean_process);
+    INIT_WORK(&sc->cci_set_work, ssv6xxx_cci_set_process);
+#endif
+    INIT_WORK(&sc->set_txpwr_work, ssv6xxx_set_txpwr_process);
+    INIT_WORK(&sc->thermal_monitor_work, ssv6xxx_thermal_monitor_process);
     sc->sc_flags |= SC_OP_DIRECTLY_ACK;
     atomic_set(&sc->ampdu_tx_frame, 0);
     sc->directly_ack_high_threshold = sc->sh->cfg.directly_ack_high_threshold;
@@ -667,9 +790,6 @@ static int ssv6xxx_deinit_softc(struct ssv_softc *sc)
     void *channels;
  struct sk_buff* skb;
     u8 remain_size;
-#ifdef MULTI_THREAD_ENCRYPT
-    struct ssv_encrypt_task_list *qtask = NULL;
-#endif
     printk("%s():\n", __FUNCTION__);
     if (sc->sh->cfg.hw_caps & SSV6200_HW_CAP_2GHZ) {
         channels = sc->sbands[INDEX_80211_BAND_2GHZ].channels;
@@ -687,8 +807,6 @@ static int ssv6xxx_deinit_softc(struct ssv_softc *sc)
 #endif
     ssv_skb_free(sc, sc->rx.rx_buf);
     sc->rx.rx_buf = NULL;
- flush_workqueue(sc->rc_report_workqueue);
- destroy_workqueue(sc->rc_report_workqueue);
  do{
   skb = ssv6200_bcast_dequeue(&sc->bcast_txq, &remain_size);
   if(skb)
@@ -698,9 +816,8 @@ static int ssv6xxx_deinit_softc(struct ssv_softc *sc)
  }while(remain_size);
 #ifdef MULTI_THREAD_ENCRYPT
     if (SSV_NEED_SW_CIPHER(sc->sh)){
-        unregister_cpu_notifier(&sc->cpu_nfb);
-        if (!list_empty(&sc->encrypt_task_head))
-        {
+        struct ssv_encrypt_task_list *qtask = NULL;
+        if (!list_empty(&sc->encrypt_task_head)){
             for (qtask = list_entry((&sc->encrypt_task_head)->next, typeof(*qtask), list);
                     !list_empty(&sc->encrypt_task_head);
                     qtask = list_entry((&sc->encrypt_task_head)->next, typeof(*qtask), list))
@@ -728,9 +845,15 @@ static int ssv6xxx_deinit_softc(struct ssv_softc *sc)
     }
     printk("[MT-ENCRYPT]: end of de-init\n");
 #endif
-    destroy_workqueue(sc->config_wq);
+    printk("%s(): Clean RX queues.\n", __func__);
+    while ((skb = skb_dequeue(&sc->rx_skb_q)) != NULL) {
+        dev_kfree_skb_any(skb);
+    }
  if (sc->cmd_data.dbg_log.data)
   kfree(sc->cmd_data.dbg_log.data);
+ flush_workqueue(sc->rc_report_workqueue);
+ destroy_workqueue(sc->rc_report_workqueue);
+    destroy_workqueue(sc->config_wq);
     del_timer_sync(&sc->house_keeping);
     destroy_workqueue(sc->house_keeping_wq);
     return 0;
@@ -740,11 +863,13 @@ static void ssv6xxx_deinit_hwsh(struct ssv_softc *sc)
     struct ssv_hw *sh = sc->sh;
     struct list_head *pos, *q;
     struct ssv_hw_cfg *entry;
+    mutex_lock(&sh->hw_cfg_mutex);
     list_for_each_safe(pos, q, &sh->hw_cfg) {
         entry = list_entry(pos, struct ssv_hw_cfg, list);
         list_del(pos);
         kfree(entry);
     }
+    mutex_unlock(&sh->hw_cfg_mutex);
     if (sh->page_count)
         kfree(sh->page_count);
     kfree(sc->sh);
@@ -758,8 +883,12 @@ void ssv6xxx_hw_set_replay_ignore(struct ssv_hw *sh,u8 ignore)
     temp |= (ignore << SCRT_RPLY_IGNORE_SFT);
     SMAC_REG_WRITE(sh,ADR_SCRT_SET, temp);
 }
+void ssv6xxx_flash_read_all_map(struct ssv_hw *sh)
+{
+    return;
+}
 #endif
-extern char *cfgfirmwarepath ;
+extern char *tu_cfgfirmwarepath ;
 int ssv6xxx_load_firmware(struct ssv_hw *sh)
 {
     int ret=0;
@@ -782,9 +911,9 @@ int ssv6xxx_load_firmware(struct ssv_hw *sh)
         printk(KERN_INFO "Not match correct CHIP identity\n");
         return -1;
     }
-    if (cfgfirmwarepath != NULL)
+    if (tu_cfgfirmwarepath != NULL)
     {
-        snprintf(temp_path, SSV_FIRMWARE_PATH_MAX, "%s%s", cfgfirmwarepath,
+        snprintf(temp_path, SSV_FIRMWARE_PATH_MAX, "%s%s", tu_cfgfirmwarepath,
                  firmware_name);
         ret = SMAC_LOAD_FW(sh,temp_path, 1);
         printk(KERN_INFO "Using firmware at %s\n", temp_path);
@@ -803,7 +932,7 @@ int ssv6xxx_load_firmware(struct ssv_hw *sh)
     return ret;
 }
 #ifdef SSV_SUPPORT_HAL
-int ssv6xxx_init_mac(struct ssv_hw *sh)
+int tu_ssv6xxx_init_mac(struct ssv_hw *sh)
 {
     struct ssv_softc *sc=sh->sc;
     int ret=0;
@@ -839,6 +968,7 @@ int ssv6xxx_init_mac(struct ssv_hw *sh)
     ret = ssv6xxx_load_firmware(sh);
     if (ret)
         goto exit;
+    SSV_PLL_CHK(sh);
     SSV_PHY_ENABLE(sh, true);
     HAL_GET_FW_VERSION(sh, &regval);
     if (regval == FIRWARE_NOT_MATCH_CODE){
@@ -901,7 +1031,7 @@ exit:
             goto exit; \
         } \
     } while (0)
-int ssv6xxx_init_mac(struct ssv_hw *sh)
+int tu_ssv6xxx_init_mac(struct ssv_hw *sh)
 {
     struct ssv_softc *sc=sh->sc;
     int i = 0 , ret = 0;
@@ -1241,12 +1371,16 @@ void inline ssv6xxx_deinit_hw(struct ssv_softc *sc)
 {
     printk("%s(): \n", __FUNCTION__);
     ssv6xxx_deinit_mac(sc);
+    HAL_DETACH_USB_HCI(sc->sh);
+    SSV_SET_ON3_ENABLE(sc->sh, false);
 }
 #ifdef SSV_SUPPORT_HAL
-static int ssv6xxx_init_hw(struct ssv_hw *sh)
+static int tu_ssv6xxx_init_hw(struct ssv_hw *sh)
 {
     int ret = 0;
     ssv_cabrio_reg *rf_tbl, *phy_tbl ;
+    SSV_SET_ON3_ENABLE(sh, true);
+    HAL_WAIT_USB_ROM_READY(sh);
     sh->tx_desc_len = HAL_GET_TX_DESC_SIZE(sh);
     sh->rx_desc_len = HAL_GET_RX_DESC_SIZE(sh);
     sh->rx_pinfo_pad = 0x04;
@@ -1264,6 +1398,8 @@ static int ssv6xxx_init_hw(struct ssv_hw *sh)
     if (ret == 0) ret = HAL_SET_PLL_PHY_RF(sh, rf_tbl, phy_tbl);
     if (ret == 0) ret = HAL_CHG_PAD_SETTING(sh);
     if (ret == 0) ret = HAL_CHG_CLK_SRC(sh);
+    if (ret == 0) ret = HAL_UPDATE_EFUSE_SETTING(sh);
+    HAL_UPDATE_PRODUCT_HW_SETTING(sh);
     {
         struct ieee80211_channel chan;
         memset(&chan, 0 , sizeof( struct ieee80211_channel));
@@ -1278,7 +1414,7 @@ static int ssv6xxx_init_hw(struct ssv_hw *sh)
     return ret;
 }
 #else
-static int ssv6xxx_init_hw(struct ssv_hw *sh)
+static int tu_ssv6xxx_init_hw(struct ssv_hw *sh)
 {
     int ret=0,i=0,x=0;
 #ifdef CONFIG_SSV_CABRIO_E
@@ -1507,21 +1643,21 @@ static int ssv6xxx_init_hw(struct ssv_hw *sh)
         printk("default value is SSV6XXX_VOLT_DCDC_CONVERT!!\n");
     }
 #endif
-    while(ssv_cfg.configuration[x][0])
+    while(tu_ssv_cfg.configuration[x][0])
     {
         for(i=0; i<sizeof(ssv6200_rf_tbl)/sizeof(ssv_cabrio_reg); i++)
         {
-            if(ssv6200_rf_tbl[i].address == ssv_cfg.configuration[x][0])
+            if(ssv6200_rf_tbl[i].address == tu_ssv_cfg.configuration[x][0])
             {
-                ssv6200_rf_tbl[i].data = ssv_cfg.configuration[x][1];
+                ssv6200_rf_tbl[i].data = tu_ssv_cfg.configuration[x][1];
                 break;
             }
         }
         for(i=0; i<sizeof(phy_setting)/sizeof(ssv_cabrio_reg); i++)
         {
-            if(phy_setting[i].address == ssv_cfg.configuration[x][0])
+            if(phy_setting[i].address == tu_ssv_cfg.configuration[x][0])
             {
-                phy_setting[i].data = ssv_cfg.configuration[x][1];
+                phy_setting[i].data = tu_ssv_cfg.configuration[x][1];
                 break;
             }
         }
@@ -1590,8 +1726,9 @@ static void ssv6xxx_save_hw_config(void *param, u32 addr, u32 value)
     struct ssv_hw_cfg *entry;
     struct ssv_hw_cfg *new_cfg;
     bool find = false;
-    if (!(sc->sh->cfg.online_reset & ONLINE_RESET_ENABLE))
+    if (!(sc->sh->cfg.online_reset & ONLINE_RESET_ENABLE) || (sc->sc_flags & SC_OP_HW_RESET))
         return;
+    mutex_lock(&sh->hw_cfg_mutex);
     list_for_each_safe(pos, q, &sh->hw_cfg) {
         entry = list_entry(pos, struct ssv_hw_cfg, list);
         if (entry->addr == addr) {
@@ -1607,16 +1744,19 @@ static void ssv6xxx_save_hw_config(void *param, u32 addr, u32 value)
         new_cfg->value = value;
         list_add_tail(&(new_cfg->list), &(sh->hw_cfg));
     }
+    mutex_unlock(&sh->hw_cfg_mutex);
 }
 static void ssv6xxx_restore_hw_config(struct ssv_softc *sc)
 {
     struct ssv_hw *sh = sc->sh;
     struct list_head *pos, *q;
     struct ssv_hw_cfg *entry;
+    mutex_lock(&sh->hw_cfg_mutex);
     list_for_each_safe(pos, q, &sh->hw_cfg) {
         entry = list_entry(pos, struct ssv_hw_cfg, list);
         SMAC_REG_WRITE(sh, entry->addr, entry->value);
     }
+    mutex_unlock(&sh->hw_cfg_mutex);
 }
 void ssv6xxx_restart_hw(struct work_struct *work)
 {
@@ -1646,10 +1786,8 @@ void ssv6xxx_restart_hw(struct work_struct *work)
     SSV_SAVE_HW_STATUS(sc);
     SSV_RESET_SYSPLF(sc->sh);
     udelay(50);
-    ssv6xxx_init_hw(sc->sh);
-    ssv6xxx_init_mac(sc->sh);
-    if (sc->sh->cfg.clk_src_80m)
-       HAL_INIT_PLL(sc->sh);
+    tu_ssv6xxx_init_hw(sc->sh);
+    tu_ssv6xxx_init_mac(sc->sh);
     ssv6xxx_restore_hw_config(sc);
     HCI_START(sc->sh);
     ret = SSV_DO_IQ_CALIB(sc->sh, &sc->sh->iqk_cfg);
@@ -1682,45 +1820,42 @@ static void ssv6xxx_check_mac2(struct ssv_hw *sh)
   u8 i;
   bool invalid = false;
   for ( i=0; i<6; i++) {
-       if ((ssv_cfg.maddr[0][i] & addr_mask[i]) !=
-               (ssv_cfg.maddr[1][i] & addr_mask[i])){
+       if ((tu_ssv_cfg.maddr[0][i] & addr_mask[i]) !=
+               (tu_ssv_cfg.maddr[1][i] & addr_mask[i])){
            invalid = true;
-           printk (" i %d , mac1[i] %x, mac2[i] %x, mask %x \n",i, ssv_cfg.maddr[0][i] ,ssv_cfg.maddr[1][i],addr_mask[i]);
+           printk (" i %d , mac1[i] %x, mac2[i] %x, mask %x \n",i, tu_ssv_cfg.maddr[0][i] ,tu_ssv_cfg.maddr[1][i],addr_mask[i]);
            break;
        }
    }
    if (invalid){
-       memcpy(&ssv_cfg.maddr[1][0], &ssv_cfg.maddr[0][0], 6);
-       ssv_cfg.maddr[1][5] ^= 0x01;
-       if (ssv_cfg.maddr[1][5] < ssv_cfg.maddr[0][5]){
+       memcpy(&tu_ssv_cfg.maddr[1][0], &tu_ssv_cfg.maddr[0][0], 6);
+       tu_ssv_cfg.maddr[1][5] ^= 0x01;
+       if (tu_ssv_cfg.maddr[1][5] < tu_ssv_cfg.maddr[0][5]){
            u8 temp;
-           temp = ssv_cfg.maddr[0][5];
-           ssv_cfg.maddr[0][5] = ssv_cfg.maddr[1][5];
-           ssv_cfg.maddr[1][5] = temp;
-           sh->cfg.maddr[0][5] = ssv_cfg.maddr[0][5];
+           temp = tu_ssv_cfg.maddr[0][5];
+           tu_ssv_cfg.maddr[0][5] = tu_ssv_cfg.maddr[1][5];
+           tu_ssv_cfg.maddr[1][5] = temp;
+           sh->cfg.maddr[0][5] = tu_ssv_cfg.maddr[0][5];
        }
        printk("MAC 2 address invalid!!\n" );
-       printk("After modification, MAC1 %pM, MAC2 %pM\n",ssv_cfg.maddr[0],
-           ssv_cfg.maddr[1]);
+       printk("After modification, MAC1 %pM, MAC2 %pM\n",tu_ssv_cfg.maddr[0],
+           tu_ssv_cfg.maddr[1]);
    }
 }
 static int ssv6xxx_read_configuration(struct ssv_hw *sh)
 {
-#if 1
-	bool mac_vail = true ;
-    memcpy(&sh->cfg, &ssv_cfg, sizeof(struct ssv6xxx_cfg));
+    memcpy(&sh->cfg, &tu_ssv_cfg, sizeof(struct ssv6xxx_cfg));
+    efuse_read_all_map(sh);
+    SSV_FLASH_READ_ALL_MAP(sh);
     if (!(is_valid_ether_addr(&sh->cfg.maddr[0][0]))){
-        printk("invalid mac addr 1 in cfg!!\n");
-		mac_vail =  false;
-        //WARN_ON(1);
-        //return 1;
+        printk("invalid mac addr 1 !!\n");
+        WARN_ON(1);
+        return 1;
     }
-    if (mac_vail && SSV_IF_CHK_MAC2(sh)) {
+    if (SSV_IF_CHK_MAC2(sh)) {
         ssv6xxx_check_mac2(sh);
-        memcpy(&sh->cfg.maddr[1][0], &ssv_cfg.maddr[1][0], ETH_ALEN);
-    
-	}
-#endif
+        memcpy(&sh->cfg.maddr[1][0], &tu_ssv_cfg.maddr[1][0], ETH_ALEN);
+    }
     #if 0
     if(sh->cfg.crystal_type == 26)
         sh->cfg.crystal_type = SSV6XXX_IQK_CFG_XTAL_26M;
@@ -1768,13 +1903,15 @@ static int ssv6xxx_read_configuration(struct ssv_hw *sh)
             return 1;
             break;
     }
-    if(sh->cfg.volt_regulator < 2)
-        sh->cfg.volt_regulator = ssv_cfg.volt_regulator;
-    else
-    {
-        printk("Please redefine volt_regulator(wifi.cfg)!!\n");
-        WARN_ON(1);
-        return 1;
+    if (!sh->flash_config.exist) {
+        if(sh->cfg.volt_regulator < 2)
+            sh->cfg.volt_regulator = tu_ssv_cfg.volt_regulator;
+        else
+        {
+            printk("Please redefine volt_regulator(wifi.cfg)!!\n");
+            WARN_ON(1);
+            return 1;
+        }
     }
     SSV_ADJ_CONFIG(sh);
     return 0;
@@ -1794,11 +1931,7 @@ static int ssv6xxx_read_hw_info(struct ssv_softc *sc)
         return -ENOMEM;
     sh->hci.hci_post_tx_cb= ssv6xxx_post_tx_cb;
     sh->hci.hci_pre_tx_cb = ssv6xxx_pre_tx_cb;
-#ifdef RATE_CONTROL_REALTIME_UPDATA
     sh->hci.hci_skb_update_cb = ssv6xxx_tx_rate_update;
-#else
-    sh->hci.hci_skb_update_cb = NULL;
-#endif
     sh->hci.hci_tx_flow_ctrl_cb = ssv6200_tx_flow_control;
     sh->hci.hci_tx_q_empty_cb = ssv6xxx_tx_q_empty_cb;
     sh->hci.hci_tx_buf_free_cb = ssv6xxx_txbuf_free_skb;
@@ -1829,12 +1962,14 @@ static int _alloc_sh (struct ssv_softc *sc)
     sc->sh = sh;
     sh->sc = sc;
     INIT_LIST_HEAD(&sh->hw_cfg);
+    mutex_init(&sh->hw_cfg_mutex);
     sh->priv = sc->dev->platform_data;
     sh->hci.if_ops = sh->priv->ops;
     sh->hci.dev = sc->dev;
     sh->hci.skb_alloc = ssv_skb_alloc;
     sh->hci.skb_free = ssv_skb_free;
     sh->hci.hci_rx_cb = ssv6200_rx;
+    sh->hci.hci_is_rx_q_full = ssv6200_is_rx_q_full;
     sh->priv->skb_alloc = ssv_skb_alloc_ex;
     sh->priv->skb_free = ssv_skb_free;
     sh->priv->skb_param = sc;
@@ -1854,7 +1989,7 @@ static int _alloc_sh (struct ssv_softc *sc)
     return 0;
 }
 #endif
-static int ssv6xxx_init_device(struct ssv_softc *sc, const char *name)
+static int tu_ssv6xxx_init_device(struct ssv_softc *sc, const char *name)
 {
 #ifndef CONFIG_SSV6XXX_HW_DEBUG
     struct ieee80211_hw *hw = sc->hw;
@@ -1865,27 +2000,25 @@ static int ssv6xxx_init_device(struct ssv_softc *sc, const char *name)
 #ifndef SSV_SUPPORT_HAL
     if ((error = _alloc_sh(sc)) != 0) {
 #else
-    if ((error = ssv6xxx_init_hal(sc)) != 0) {
+    if ((error = tu_ssv6xxx_init_hal(sc)) != 0) {
 #endif
         goto err;
     }
     sh = sc->sh;
-    if ((error = ssv6xxx_hci_register(&sh->hci)) != 0)
+    if ((error = tu_ssv6xxx_hci_register(&sh->hci)) != 0)
         goto err_sh;;
     if ((error = ssv6xxx_read_hw_info(sc)) != 0) {
         goto err_hci;
     }
-	
     if (sh->cfg.hw_caps == 0) {
         error = -1;
         goto err_hci;
     }
-	efuse_read_all_map(sh);
-    if ((error = ssv6xxx_init_softc(sc)) != 0) {
+    if ((error = tu_ssv6xxx_init_softc(sc)) != 0) {
         goto err_softc;
     }
     ssv6xxx_set_80211_hw_capab(sc);
-    if ((error = ssv6xxx_init_hw(sc->sh)) != 0) {
+    if ((error = tu_ssv6xxx_init_hw(sc->sh)) != 0) {
         goto err_hw;
     }
 #ifndef CONFIG_SSV6XXX_HW_DEBUG
@@ -1900,7 +2033,13 @@ static int ssv6xxx_init_device(struct ssv_softc *sc, const char *name)
     ssv_init_cli(dev_name(sc->dev), &sc->cmd_data);
 #endif
 #ifdef CONFIG_SSV6XXX_DEBUGFS
-    ssv6xxx_init_debugfs(sc, name);
+    tu_ssv6xxx_init_debugfs(sc, name);
+#endif
+#ifdef CONFIG_SSV_SMARTLINK
+    {
+        extern int ksmartlink_init(void);
+        (void)ksmartlink_init();
+    }
 #endif
     sc->sc_flags |= SC_OP_DEV_READY;
     return 0;
@@ -1909,7 +2048,7 @@ err_hw:
 err_softc:
     ssv6xxx_deinit_softc(sc);
 err_hci:
-    ssv6xxx_hci_deregister(&sh->hci);
+    tu_ssv6xxx_hci_deregister(&sh->hci);
 err_sh:
     ssv6xxx_deinit_hwsh(sc);
 err:
@@ -1918,26 +2057,38 @@ err:
 int ssv6xxx_rate_control_register(void)
 {
  int ret = 0;
+#if (!defined(SSV_SUPPORT_HAL)||defined(SSV_SUPPORT_SSV6051))
  ret = ssv6xxx_pid_rate_control_register();
  if (ret)
   return ret;
+#endif
  ret = ssv6xxx_minstrel_rate_control_register();
  if (ret)
   goto err_ssv_minstrel;
  return 0;
 err_ssv_minstrel:
+#if (!defined(SSV_SUPPORT_HAL)||defined(SSV_SUPPORT_SSV6051))
  ssv6xxx_pid_rate_control_unregister();
+#endif
  return ret;
 }
 void ssv6xxx_rate_control_unregister(void)
 {
+#if (!defined(SSV_SUPPORT_HAL)||defined(SSV_SUPPORT_SSV6051))
  ssv6xxx_pid_rate_control_unregister();
+#endif
  ssv6xxx_minstrel_rate_control_unregister();
 }
 static void ssv6xxx_deinit_device(struct ssv_softc *sc)
 {
     printk("%s(): \n", __FUNCTION__);
     sc->sc_flags &= ~SC_OP_DEV_READY;
+#ifdef CONFIG_SSV_SMARTLINK
+    {
+        extern void ksmartlink_exit(void);
+        ksmartlink_exit();
+    }
+#endif
 #ifdef CONFIG_SSV6XXX_DEBUGFS
     ssv6xxx_deinit_debugfs(sc);
 #endif
@@ -1952,11 +2103,11 @@ static void ssv6xxx_deinit_device(struct ssv_softc *sc)
 #endif
     ssv6xxx_deinit_hw(sc);
     ssv6xxx_deinit_softc(sc);
-    ssv6xxx_hci_deregister(&sc->sh->hci);
+    tu_ssv6xxx_hci_deregister(&sc->sh->hci);
     ssv6xxx_deinit_hwsh(sc);
 }
 extern struct ieee80211_ops ssv6200_ops;
-int ssv6xxx_dev_probe(struct platform_device *pdev)
+int tu_ssv6xxx_dev_probe(struct platform_device *pdev)
 {
     struct ssv_softc *sc;
     struct ieee80211_hw *hw;
@@ -1965,9 +2116,13 @@ int ssv6xxx_dev_probe(struct platform_device *pdev)
         dev_err(&pdev->dev, "no platform data specified!\n");
         return -EINVAL;
     }
-    printk("%s(): SSV6XXX device \"%s\" found !\n", __FUNCTION__, pdev->name);
-    hw = ieee80211_alloc_hw(sizeof(struct ssv_softc), &ssv6200_ops);
-    if (hw == NULL) {
+    printk("%s(): SSV6X5X device \"%s\" found !\n", __FUNCTION__, pdev->name);
+#ifdef SSV_MAC80211
+ hw = ieee80211_alloc_hw_nm(sizeof(struct ssv_softc), &ssv6200_ops,"icomm");
+#else
+ hw = ieee80211_alloc_hw(sizeof(struct ssv_softc), &ssv6200_ops);
+#endif
+ if (hw == NULL) {
         dev_err(&pdev->dev, "No memory for ieee80211_hw\n");
         return -ENOMEM;
     }
@@ -1978,21 +2133,17 @@ int ssv6xxx_dev_probe(struct platform_device *pdev)
     sc->hw = hw;
     sc->dev = &pdev->dev;
     sc->platform_dev = pdev;
-    ret = ssv6xxx_init_device(sc, pdev->name);
+    ret = tu_ssv6xxx_init_device(sc, pdev->name);
     if (ret) {
         dev_err(&pdev->dev, "Failed to initialize device\n");
         ieee80211_free_hw(hw);
         return ret;
     }
-    wiphy_info(hw->wiphy, "%s\n", "SSV6200 of South Silicon Valley");
+    wiphy_info(hw->wiphy, "%s\n", "SSV6X5X of iComm-semi");
     return 0;
 }
-EXPORT_SYMBOL(ssv6xxx_dev_probe);
+EXPORT_SYMBOL(tu_ssv6xxx_dev_probe);
 static void ssv6xxx_stop_all_running_threads(struct ssv_softc *sc) {
-#ifdef MULTI_THREAD_ENCRYPT
-    struct ssv_encrypt_task_list *qtask = NULL;
-    int counter = 0;
-#endif
     if (sc->ssv_txtput.txtput_tsk) {
         kthread_stop(sc->ssv_txtput.txtput_tsk);
         sc->ssv_txtput.txtput_tsk = NULL;
@@ -2004,11 +2155,18 @@ static void ssv6xxx_stop_all_running_threads(struct ssv_softc *sc) {
     cancel_work_sync(&sc->rx_stuck_work);
     cancel_work_sync(&sc->mib_edca_work);
     cancel_work_sync(&sc->tx_poll_work);
+#ifdef CONFIG_SSV_CCI_IMPROVEMENT
     cancel_work_sync(&sc->cci_clean_work);
+    cancel_work_sync(&sc->cci_set_work);
+#endif
+    cancel_work_sync(&sc->set_txpwr_work);
+ cancel_work_sync(&sc->thermal_monitor_work);
 #ifdef MULTI_THREAD_ENCRYPT
     if (SSV_NEED_SW_CIPHER(sc->sh)){
+        unregister_cpu_notifier(&sc->cpu_nfb);
         if (!list_empty(&sc->encrypt_task_head))
-        {
+        { int counter = 0;
+            struct ssv_encrypt_task_list *qtask = NULL;
             for (qtask = list_entry((&sc->encrypt_task_head)->next, typeof(*qtask), list);
                     !list_empty(&sc->encrypt_task_head);
                     qtask = list_entry((&sc->encrypt_task_head)->next, typeof(*qtask), list))
@@ -2042,11 +2200,11 @@ static void ssv6xxx_stop_all_running_threads(struct ssv_softc *sc) {
         printk("HCI TX task is stopped.\n");
     }
 }
-int ssv6xxx_dev_remove(struct platform_device *pdev)
+int tu_ssv6xxx_dev_remove(struct platform_device *pdev)
 {
     struct ieee80211_hw *hw=dev_get_drvdata(&pdev->dev);
     struct ssv_softc *sc=hw->priv;
-    printk("ssv6xxx_dev_remove(): pdev=%p, hw=%p\n", pdev, hw);
+    printk("tu_ssv6xxx_dev_remove(): pdev=%p, hw=%p\n", pdev, hw);
     ssv6xxx_stop_all_running_threads(sc);
     ssv6xxx_deinit_device(sc);
     printk("ieee80211_free_hw(): \n");
@@ -2054,23 +2212,27 @@ int ssv6xxx_dev_remove(struct platform_device *pdev)
     pr_info("ssv6200: Driver unloaded\n");
     return 0;
 }
-EXPORT_SYMBOL(ssv6xxx_dev_remove);
+EXPORT_SYMBOL(tu_ssv6xxx_dev_remove);
 static const struct platform_device_id ssv6xxx_id_table[] = {
     {
-        .name = SSV6051_CHIP,
+        .name = SSV6200A,
         .driver_data = 0,
     },
     {
-        .name = SSV6051_CHIP_ECO3,
+        .name = RSV6200A,
         .driver_data = 0,
     },
     #ifdef SSV_SUPPORT_SSV6006
     {
-        .name = SSV6006,
+        .name = SSV6006A,
         .driver_data = 0,
     },
     {
-        .name = SSV6006MP,
+        .name = SSV6006C,
+        .driver_data = 0,
+    },
+    {
+        .name = SSV6006D,
         .driver_data = 0,
     },
     #endif
@@ -2079,15 +2241,15 @@ static const struct platform_device_id ssv6xxx_id_table[] = {
 MODULE_DEVICE_TABLE(platform, ssv6xxx_id_table);
 static struct platform_driver ssv6xxx_driver =
 {
-    .probe = ssv6xxx_dev_probe,
+    .probe = tu_ssv6xxx_dev_probe,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
-    .remove = __devexit_p(ssv6xxx_dev_remove),
+    .remove = __devexit_p(tu_ssv6xxx_dev_remove),
 #else
-    .remove = ssv6xxx_dev_remove,
+    .remove = tu_ssv6xxx_dev_remove,
 #endif
     .id_table = ssv6xxx_id_table,
     .driver = {
-        .name = CABRIO_DRVER_NAME,
+        .name = SSV_DRVER_NAME,
         .owner = THIS_MODULE,
     }
 };
@@ -2099,25 +2261,33 @@ static int device_match_by_alias(struct device *dev, void *data)
   char device_name[32];
  } *pattern;
  pattern = (struct _pattern *)data;
- printk("%s: driver[%s][%s], device[%s][%s]\n", __FUNCTION__, driver->name, pattern->driver_name,
-  dev_name(dev), pattern->device_name);
  if (!strcmp(driver->name, pattern->driver_name) && !strcmp(dev_name(dev), pattern->device_name))
   return 1;
- else
+    if (!strcmp(driver->name, pattern->driver_name) && !strcmp("", pattern->device_name))
+        return 1;
+ else {
+     printk("%s: driver[%s][%s], device[%s][%s]\n", __FUNCTION__, driver->name, pattern->driver_name,
+      dev_name(dev), pattern->device_name);
   return 0;
+    }
 }
 struct ssv_softc *ssv6xxx_driver_attach(char *driver_name)
 {
-    struct device *dev;
+ struct device *dev;
     struct ieee80211_hw *hw;
-    struct ssv_softc *sc = NULL;
-    dev = driver_find_device(&ssv6xxx_driver.driver, NULL,
-            (void *)driver_name, device_match_by_alias);
-    if (!dev)
-    {
-        printk("Cannot find the device driver[%s]\n", driver_name);
-        return NULL;
-    }
+    struct ssv_softc *sc;
+ struct _pattern {
+  char driver_name[32];
+  char device_name[32];
+ } pattern;
+    memset(&pattern, 0, sizeof(struct _pattern));
+ sprintf(pattern.driver_name, "%s", driver_name);
+ dev = driver_find_device(&ssv6xxx_driver.driver, NULL,
+   (void *)&pattern, device_match_by_alias);
+ if (!dev) {
+  printk("Cannot find the driver[%s]\n", driver_name);
+  return NULL;
+ }
     hw = dev_get_drvdata(dev);
     sc = hw->priv;
     return sc;
@@ -2291,9 +2461,9 @@ int ssv6xxx_umac_deattach(char *driver_name, char *device_name)
 }
 EXPORT_SYMBOL(ssv6xxx_umac_deattach);
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
-int ssv6xxx_init(void)
+int tu_ssv6xxx_init(void)
 #else
-static int __init ssv6xxx_init(void)
+static int __init tu_ssv6xxx_init(void)
 #endif
 {
  int ret = 0;
@@ -2315,15 +2485,18 @@ static int __init ssv6xxx_init(void)
     return platform_driver_register(&ssv6xxx_driver);
 }
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
-void ssv6xxx_exit(void)
+void tu_ssv6xxx_exit(void)
 #else
-static void __exit ssv6xxx_exit(void)
+static void __exit tu_ssv6xxx_exit(void)
 #endif
 {
     ssv6xxx_rate_control_unregister();
     platform_driver_unregister(&ssv6xxx_driver);
 }
-#if (!defined(CONFIG_SSV_SUPPORT_ANDROID) && !defined(CONFIG_SSV_BUILD_AS_ONE_KO))
-module_init(ssv6xxx_init);
-module_exit(ssv6xxx_exit);
+#if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
+EXPORT_SYMBOL(tu_ssv6xxx_init);
+EXPORT_SYMBOL(tu_ssv6xxx_exit);
+#else
+module_init(tu_ssv6xxx_init);
+module_exit(tu_ssv6xxx_exit);
 #endif

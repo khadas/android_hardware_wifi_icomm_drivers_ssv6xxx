@@ -999,8 +999,8 @@ static int ssv_cmd_mib(int argc, char *argv[])
         for(i=0; i<120; i++, addr+=4) {
             if(SSV_REG_READ1(ssv6xxx_debug_ifops, addr, &value)){
             sprintf(temp_str, "%08x ", value);
-            strcat(ssv6xxx_result_buf, temp_str);
-	    }
+            }
+			strcat(ssv6xxx_result_buf, temp_str);
             if (((i+1)&0x07) == 0)
                 strcat(ssv6xxx_result_buf, "\n");
         }
@@ -1010,70 +1010,70 @@ static int ssv_cmd_mib(int argc, char *argv[])
          sprintf(temp_str, "%-10s\t\t%-10s\t\t%-10s\t\t%-10s\n","MRX_FCS_SUCC", "MRX_FCS_ERR", "MRX_ALC_FAIL", "MRX_MISS");
          strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_FCS_SUCC, &value)){
-            sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\t\t", value);}
+            strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_FCS_ERR, &value)){
-            sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\t\t", value);}
+            strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_ALC_FAIL, &value)){
-            sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\t\t", value);}
+            strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_MISS, &value)){
-            sprintf(temp_str, "[%08x]\n", value);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\n", value);}
+            strcat(ssv6xxx_result_buf, temp_str);
          sprintf(temp_str, "%-10s\t\t%-10s\t\t%-10s\t%-10s\n", "MRX_MB_MISS", "MRX_NIDLE_MISS", "DBG_LEN_ALC_FAIL", "DBG_LEN_CRC_FAIL");
          strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_MB_MISS, &value)){
-            sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\t\t", value);}
+            strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_MRX_NIDLE_MISS, &value)){
-            sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\t\t", value);}
+            strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_LEN_ALC_FAIL, &value)){
-            sprintf(temp_str, "[%08x]\t\t", value);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\t\t", value);}
+            strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_LEN_CRC_FAIL, &value)){
-            sprintf(temp_str, "[%08x]\n\n", value);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\n\n", value);}
+            strcat(ssv6xxx_result_buf, temp_str);
           if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_AMPDU_PASS, &value)){
-             sprintf(temp_str, "[%08x]\t\t", value);
-             strcat(ssv6xxx_result_buf, temp_str);}
+             sprintf(temp_str, "[%08x]\t\t", value);}
+             strcat(ssv6xxx_result_buf, temp_str);
           if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_DBG_AMPDU_FAIL, &value)){
-             sprintf(temp_str, "[%08x]\t\t", value);
-             strcat(ssv6xxx_result_buf, temp_str);}
+             sprintf(temp_str, "[%08x]\t\t", value);}
+             strcat(ssv6xxx_result_buf, temp_str);
           if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_ID_ALC_FAIL1, &value)){
-             sprintf(temp_str, "[%08x]\t\t", value);
+             sprintf(temp_str, "[%08x]\t\t", value);}
              strcat(ssv6xxx_result_buf, temp_str);
-	   }
+	   
           if(SSV_REG_READ1(ssv6xxx_debug_ifops, ADR_ID_ALC_FAIL2, &value)){
-             sprintf(temp_str, "[%08x]\n\n", value);
+             sprintf(temp_str, "[%08x]\n\n", value);}
              strcat(ssv6xxx_result_buf, temp_str);
-	   }
+	   
          sprintf(temp_str, "PHY B mode:\n");
          strcat(ssv6xxx_result_buf, temp_str);
          sprintf(temp_str, "%-10s\t\t%-10s\t\t%-10s\n", "CRC error","CCA","counter");
          strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0023E8, &value)){
-            sprintf(temp_str, "[%08x]\t\t", value&0xffff);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\t\t", value&0xffff);}
+            strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0023EC, &value)){
-            sprintf(temp_str, "[%08x]\t\t", (value>>16)&0xffff);
+            sprintf(temp_str, "[%08x]\t\t", (value>>16)&0xffff);}
             strcat(ssv6xxx_result_buf, temp_str);
             sprintf(temp_str, "[%08x]\t\t\n\n", value&0xffff);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            strcat(ssv6xxx_result_buf, temp_str);
         sprintf(temp_str, "PHY G/N mode:\n");
         strcat(ssv6xxx_result_buf, temp_str);
         sprintf(temp_str, "%-10s\t\t%-10s\t\t%-10s\n", "CRC error","CCA","counter");
         strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0043E8, &value)){
-            sprintf(temp_str, "[%08x]\t\t", value&0xffff);
-            strcat(ssv6xxx_result_buf, temp_str);}
+            sprintf(temp_str, "[%08x]\t\t", value&0xffff);}
+            strcat(ssv6xxx_result_buf, temp_str);
          if(SSV_REG_READ1(ssv6xxx_debug_ifops, 0xCE0043EC, &value)){
-            sprintf(temp_str, "[%08x]\t\t", (value>>16)&0xffff);
+            sprintf(temp_str, "[%08x]\t\t", (value>>16)&0xffff);}
             strcat(ssv6xxx_result_buf, temp_str);
             sprintf(temp_str, "[%08x]\t\t\n\n", value&0xffff);
             strcat(ssv6xxx_result_buf, temp_str);
-	}
+	
     }
     else
     {

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -102,9 +101,9 @@ struct ssv6xxx_hwif_ops {
     int (*property)(struct device *child);
     void (*sysplf_reset)(struct device *child, u32 addr, u32 value);
 #if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
-    void (*hwif_rx_task)(struct device *child, int (*rx_cb)(struct sk_buff_head *rxq, void *args), void *args, u32 *pkt);
+    void (*hwif_rx_task)(struct device *child, int (*rx_cb)(struct sk_buff_head *rxq, void *args), int (*is_rx_q_full)(void *args), void *args, u32 *pkt);
 #else
-    void (*hwif_rx_task)(struct device *child, int (*rx_cb)(struct sk_buff *rx_skb, void *args), void *args, u32 *pkt);
+    void (*hwif_rx_task)(struct device *child, int (*rx_cb)(struct sk_buff *rx_skb, void *args), int (*is_rx_q_full)(void *args), void *args, u32 *pkt);
 #endif
 };
 struct ssv6xxx_platform_data {

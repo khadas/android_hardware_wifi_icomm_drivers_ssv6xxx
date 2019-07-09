@@ -471,6 +471,8 @@ enum ssv_debug_skb_timestamp
 #define SSV6051Z 0x71000000
 #define SSV6051Q 0x73000000
 #define SSV6051P 0x75000000
+#define SSV6030P 0x76000000
+
 #ifdef CONFIG_SSV_CABRIO_E
 struct ssv6xxx_tx_loopback {
     u32 reg;

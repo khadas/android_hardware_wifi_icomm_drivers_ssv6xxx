@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -30,6 +29,7 @@
 #define SSV6200_HW_CAP_TDLS 0x00000800
 #define SSV6200_HW_CAP_STBC 0x00001000
 #define SSV6200_HW_CAP_HCI_RX_AGGR 0x00002000
+#define SSV6200_HW_CAP_BEACON 0x00004000
 #define EXTERNEL_CONFIG_SUPPORT 64
 #define USB_HW_RESOURCE_CHK_NONE 0x00000000
 #define USB_HW_RESOURCE_CHK_TXID 0x00000001
@@ -39,6 +39,25 @@
 #define ONLINE_RESET_ENABLE 0x00000100
 #define ONLINE_RESET_EDCA_THRESHOLD_MASK 0x000000ff
 #define ONLINE_RESET_EDCA_THRESHOLD_SFT 0
+
+
+enum ssv_reg_domain {
+	DOMAIN_FCC = 0,
+	DOMAIN_china,
+	DOMAIN_ETSI,
+	DOMAIN_Japan,
+	DOMAIN_Japan2,
+	DOMAIN_Israel,
+	DOMAIN_Korea,
+	DOMAIN_North_America,
+	DOMAIN_Singapore,
+    DOMAIN_Taiwan,
+    DOMAIN_other = 0xff,
+};
+
+
+
+
 struct rc_setting{
     u16 aging_period;
     u16 target_success_67;
@@ -78,14 +97,18 @@ struct ssv6xxx_cfg {
     u32 tx_power_index_1;
     u32 tx_power_index_2;
     u32 chip_identity;
+    u32 rate_table_1;
+    u32 rate_table_2;
     u32 wifi_tx_gain_level_gn;
     u32 wifi_tx_gain_level_b;
     u32 configuration[EXTERNEL_CONFIG_SUPPORT+1][2];
     u8 firmware_path[128];
+    u8 flash_bin_path[128];
     u8 external_firmware_name[128];
     u8 mac_address_path[128];
     u8 mac_output_path[128];
     u32 ignore_efuse_mac;
+	u32 efuse_rate_gain_mask;
     u32 mac_address_mode;
     u32 beacon_rssi_minimal;
     u32 rc_ht_support_cck;
@@ -117,9 +140,21 @@ struct ssv6xxx_cfg {
     u32 vi_txq_size;
     u32 vo_txq_size;
     u32 manage_txq_size;
+    u32 aggr_size_sel_pr;
     u32 greentx;
+    u32 gt_stepsize;
+    u32 gt_max_attenuation;
     struct rc_setting rc_setting;
     u32 directly_ack_low_threshold;
     u32 directly_ack_high_threshold;
+    u32 txrxboost_prio;
+    u32 txrxboost_low_threshold;
+    u32 txrxboost_high_threshold;
+    u32 rx_threshold;
+    bool force_xtal_fo;
+    u32 auto_sgi;
+    u32 disable_dpd;
+    u32 mic_err_notify;
+    u32 domain;
 };
 #endif

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -23,6 +22,12 @@
 #endif
 #include <linux/platform_device.h>
 #include <linux/string.h>
+#include <linux/sched.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,15,0)
+#include <linux/sched/prio.h>
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0)
+#include <linux/sched/rt.h>
+#endif
 #include <ssv_conf_parser.h>
 #ifndef SSV_SUPPORT_HAL
 #include <ssv6200_reg.h>
@@ -428,8 +433,8 @@ static int ssv_cmd_reg(struct ssv_softc *sc, int argc, char *argv[])
     }
     return -1;
 }
-struct ssv6xxx_cfg ssv_cfg;
-EXPORT_SYMBOL(ssv_cfg);
+struct ssv6xxx_cfg tu_ssv_cfg;
+EXPORT_SYMBOL(tu_ssv_cfg);
 #if 0
 static int __string2s32(u8 *val_str, void *val)
 {
@@ -500,124 +505,139 @@ static int __string2configuration(u8 *mac_str, void *val, u32 arg)
         return -1;
     for(i=0; i<EXTERNEL_CONFIG_SUPPORT; i++)
     {
-        if(ssv_cfg.configuration[i][0] == 0x0)
+        if(tu_ssv_cfg.configuration[i][0] == 0x0)
         {
-            ssv_cfg.configuration[i][0] = address;
-            ssv_cfg.configuration[i][1] = value;
+            tu_ssv_cfg.configuration[i][0] = address;
+            tu_ssv_cfg.configuration[i][1] = value;
             return 0;
         }
     }
     return 0;
 }
-struct ssv6xxx_cfg_cmd_table cfg_cmds[] = {
-    { "hw_mac", (void *)&ssv_cfg.maddr[0][0], 0, __string2mac , NULL},
-    { "hw_mac_2", (void *)&ssv_cfg.maddr[1][0], 0, __string2mac , NULL},
-    { "def_chan", (void *)&ssv_cfg.def_chan, 0, __string2u32 , "6"},
-    { "hw_cap_ht", (void *)&ssv_cfg.hw_caps, 0, __string2flag32 , "on"},
-    { "hw_cap_gf", (void *)&ssv_cfg.hw_caps, 1, __string2flag32 , "off"},
-    { "hw_cap_2ghz", (void *)&ssv_cfg.hw_caps, 2, __string2flag32 , "on"},
-    { "hw_cap_5ghz", (void *)&ssv_cfg.hw_caps, 3, __string2flag32 , "on"},
-    { "hw_cap_security", (void *)&ssv_cfg.hw_caps, 4, __string2flag32 , "on"},
-    { "hw_cap_sgi", (void *)&ssv_cfg.hw_caps, 5, __string2flag32 , "on"},
-    { "hw_cap_ht40", (void *)&ssv_cfg.hw_caps, 6, __string2flag32 , "on"},
-    { "hw_cap_ap", (void *)&ssv_cfg.hw_caps, 7, __string2flag32 , "on"},
-    { "hw_cap_p2p", (void *)&ssv_cfg.hw_caps, 8, __string2flag32 , "on"},
-    { "hw_cap_ampdu_rx", (void *)&ssv_cfg.hw_caps, 9, __string2flag32 , "on"},
-    { "hw_cap_ampdu_tx", (void *)&ssv_cfg.hw_caps, 10, __string2flag32 , "on"},
-    { "hw_cap_tdls", (void *)&ssv_cfg.hw_caps, 11, __string2flag32 , "off"},
-    { "hw_cap_stbc", (void *)&ssv_cfg.hw_caps, 12, __string2flag32 , "on"},
-    { "hw_cap_hci_rx_aggr", (void *)&ssv_cfg.hw_caps, 13, __string2flag32 , "on"},
-    { "use_wpa2_only", (void *)&ssv_cfg.use_wpa2_only, 0, __string2u32 , NULL},
-    { "wifi_tx_gain_level_gn",(void *)&ssv_cfg.wifi_tx_gain_level_gn, 0, __string2u32 , NULL},
-    { "wifi_tx_gain_level_b", (void *)&ssv_cfg.wifi_tx_gain_level_b, 0, __string2u32 , NULL},
-    { "xtal_clock", (void *)&ssv_cfg.crystal_type, 0, __string2u32 , "26"},
-    { "volt_regulator", (void *)&ssv_cfg.volt_regulator, 0, __string2u32 , NULL},
-    { "firmware_path", (void *)&ssv_cfg.firmware_path[0], 0, __string2str , NULL},
-    { "mac_address_path", (void *)&ssv_cfg.mac_address_path[0], 0, __string2str , NULL},
-    { "mac_output_path", (void *)&ssv_cfg.mac_output_path[0], 0, __string2str , NULL},
-    { "ignore_efuse_mac", (void *)&ssv_cfg.ignore_efuse_mac, 0, __string2u32 , NULL},
-    { "mac_address_mode", (void *)&ssv_cfg.mac_address_mode, 0, __string2u32 , NULL},
+struct ssv6xxx_cfg_cmd_table tu_cfg_cmds[] = {
+    { "hw_mac", (void *)&tu_ssv_cfg.maddr[0][0], 0, __string2mac , NULL},
+    { "hw_mac_2", (void *)&tu_ssv_cfg.maddr[1][0], 0, __string2mac , NULL},
+    { "def_chan", (void *)&tu_ssv_cfg.def_chan, 0, __string2u32 , "6"},
+    { "hw_cap_ht", (void *)&tu_ssv_cfg.hw_caps, 0, __string2flag32 , "on"},
+    { "hw_cap_gf", (void *)&tu_ssv_cfg.hw_caps, 1, __string2flag32 , "off"},
+    { "hw_cap_2ghz", (void *)&tu_ssv_cfg.hw_caps, 2, __string2flag32 , "on"},
+    { "hw_cap_5ghz", (void *)&tu_ssv_cfg.hw_caps, 3, __string2flag32 , "off"},
+    { "hw_cap_security", (void *)&tu_ssv_cfg.hw_caps, 4, __string2flag32 , "on"},
+    { "hw_cap_sgi", (void *)&tu_ssv_cfg.hw_caps, 5, __string2flag32 , "on"},
+    { "hw_cap_ht40", (void *)&tu_ssv_cfg.hw_caps, 6, __string2flag32 , "on"},
+    { "hw_cap_ap", (void *)&tu_ssv_cfg.hw_caps, 7, __string2flag32 , "on"},
+    { "hw_cap_p2p", (void *)&tu_ssv_cfg.hw_caps, 8, __string2flag32 , "on"},
+    { "hw_cap_ampdu_rx", (void *)&tu_ssv_cfg.hw_caps, 9, __string2flag32 , "on"},
+    { "hw_cap_ampdu_tx", (void *)&tu_ssv_cfg.hw_caps, 10, __string2flag32 , "on"},
+    { "hw_cap_tdls", (void *)&tu_ssv_cfg.hw_caps, 11, __string2flag32 , "off"},
+    { "hw_cap_stbc", (void *)&tu_ssv_cfg.hw_caps, 12, __string2flag32 , "on"},
+    { "hw_cap_hci_rx_aggr", (void *)&tu_ssv_cfg.hw_caps, 13, __string2flag32 , "on"},
+    { "hw_beacon", (void *)&tu_ssv_cfg.hw_caps, 14, __string2flag32 , "on"},
+    { "use_wpa2_only", (void *)&tu_ssv_cfg.use_wpa2_only, 0, __string2u32 , NULL},
+    { "wifi_tx_gain_level_gn",(void *)&tu_ssv_cfg.wifi_tx_gain_level_gn, 0, __string2u32 , NULL},
+    { "wifi_tx_gain_level_b", (void *)&tu_ssv_cfg.wifi_tx_gain_level_b, 0, __string2u32 , NULL},
+    { "xtal_clock", (void *)&tu_ssv_cfg.crystal_type, 0, __string2u32 , "24"},
+    { "volt_regulator", (void *)&tu_ssv_cfg.volt_regulator, 0, __string2u32 , "0"},
+    { "firmware_path", (void *)&tu_ssv_cfg.firmware_path[0], 0, __string2str , NULL},
+    { "flash_bin_path", (void *)&tu_ssv_cfg.flash_bin_path[0], 0, __string2str , NULL},
+    { "mac_address_path", (void *)&tu_ssv_cfg.mac_address_path[0], 0, __string2str , NULL},
+    { "mac_output_path", (void *)&tu_ssv_cfg.mac_output_path[0], 0, __string2str , NULL},
+    { "ignore_efuse_mac", (void *)&tu_ssv_cfg.ignore_efuse_mac, 0, __string2u32 , NULL},
+    { "efuse_rate_gain_mask", (void *)&tu_ssv_cfg.efuse_rate_gain_mask, 0, __string2u32 , "0x1"},
+    { "mac_address_mode", (void *)&tu_ssv_cfg.mac_address_mode, 0, __string2u32 , NULL},
     { "register", NULL, 0, __string2configuration, NULL},
-    { "beacon_rssi_minimal", (void *)&ssv_cfg.beacon_rssi_minimal, 0, __string2u32 , NULL},
-    { "force_chip_identity", (void *)&ssv_cfg.force_chip_identity, 0, __string2u32 , NULL},
-    { "external_firmware_name", (void *)&ssv_cfg.external_firmware_name[0], 0, __string2str, NULL},
-    { "ignore_firmware_version", (void *)&ssv_cfg.ignore_firmware_version, 0, __string2u32, NULL},
-    { "use_sw_cipher", (void *)&ssv_cfg.use_sw_cipher, 0, __string2u32, NULL},
-    { "rc_ht_support_cck", (void *)&ssv_cfg.rc_ht_support_cck, 0, __string2u32 , "1"},
-    { "auto_rate_enable", (void *)&ssv_cfg.auto_rate_enable, 0, __string2u32 , "1"},
-    { "rc_rate_idx_set", (void *)&ssv_cfg.rc_rate_idx_set, 0, __string2u32 , "0x7777"},
-    { "rc_retry_set", (void *)&ssv_cfg.rc_retry_set, 0, __string2u32 , "0x4444"},
-    { "rc_mf", (void *)&ssv_cfg.rc_mf, 0, __string2u32 , NULL},
-    { "rc_long_short", (void *)&ssv_cfg.rc_long_short, 0, __string2u32 , NULL},
-    { "rc_ht40", (void *)&ssv_cfg.rc_ht40, 0, __string2u32 , NULL},
-    { "rc_phy_mode" , (void *)&ssv_cfg.rc_phy_mode, 0, __string2u32 , "3"},
- { "tx_id_threshold" , (void *)&ssv_cfg.tx_id_threshold, 0, __string2u32 , NULL},
- { "tx_page_threshold" , (void *)&ssv_cfg.tx_page_threshold, 0, __string2u32 , NULL},
- { "max_rx_aggr_size", (void *)&ssv_cfg.max_rx_aggr_size, 0, __string2u32 , "64"},
- { "online_reset", (void *)&ssv_cfg.online_reset, 0, __string2u32 , "0x10f"},
- { "rx_burstread", (void *)&ssv_cfg.rx_burstread, 0, __string2bool , "0"},
-    { "hw_rx_agg_cnt", (void *)&ssv_cfg.hw_rx_agg_cnt, 0, __string2u32 , "3"},
- { "hw_rx_agg_method_3", (void *)&ssv_cfg.hw_rx_agg_method_3, 0, __string2bool , "0"},
- { "hw_rx_agg_timer_reload", (void *)&ssv_cfg.hw_rx_agg_timer_reload, 0, __string2u32 , "20"},
- { "usb_hw_resource", (void *)&ssv_cfg.usb_hw_resource, 0, __string2u32 , "0"},
- { "tx_stuck_detect", (void *)&ssv_cfg.tx_stuck_detect, 0, __string2bool , "0"},
- { "clk_src_80m", (void *)&ssv_cfg.clk_src_80m, 0, __string2bool , "1"},
- { "rts_thres_len", (void *)&ssv_cfg.rts_thres_len, 0, __string2u32 , "0"},
-    { "cci", (void *)&ssv_cfg.cci, 0, __string2u32 , "0x19"},
-    { "bk_txq_size", (void *)&ssv_cfg.bk_txq_size, 0, __string2u32 , "4"},
-    { "be_txq_size", (void *)&ssv_cfg.be_txq_size, 0, __string2u32 , "11"},
-    { "vi_txq_size", (void *)&ssv_cfg.vi_txq_size, 0, __string2u32 , "16"},
-    { "vo_txq_size", (void *)&ssv_cfg.vo_txq_size, 0, __string2u32 , "16"},
-    { "manage_txq_size", (void *)&ssv_cfg.manage_txq_size, 0, __string2u32 , "8"},
-    { "aging_period", (void *)&ssv_cfg.rc_setting.aging_period,0, __string2u32 , "2000"},
-    { "target_success_67", (void *)&ssv_cfg.rc_setting.target_success_67, 0, __string2u32 , "55"},
-    { "target_success_5", (void *)&ssv_cfg.rc_setting.target_success_5 , 0, __string2u32 , "78"},
-    { "target_success_4", (void *)&ssv_cfg.rc_setting.target_success_4 , 0, __string2u32 , "70"},
-    { "target_success", (void *)&ssv_cfg.rc_setting.target_success , 0, __string2u32 , "50"},
-    { "up_pr", (void *)&ssv_cfg.rc_setting.up_pr, 0, __string2u32 , "70"},
-    { "up_pr3", (void *)&ssv_cfg.rc_setting.up_pr3, 0, __string2u32 , "85"},
-    { "up_pr4", (void *)&ssv_cfg.rc_setting.up_pr4, 0, __string2u32 , "97"},
-    { "up_pr5", (void *)&ssv_cfg.rc_setting.up_pr5, 0, __string2u32 , "70"},
-    { "up_pr6", (void *)&ssv_cfg.rc_setting.up_pr6, 0, __string2u32 , "70"},
-    { "forbid", (void *)&ssv_cfg.rc_setting.forbid, 0, __string2u32 , "0"},
-    { "forbid3", (void *)&ssv_cfg.rc_setting.forbid3, 0, __string2u32 , "0"},
-    { "forbid4", (void *)&ssv_cfg.rc_setting.forbid4, 0, __string2u32 , "350"},
-    { "forbid5", (void *)&ssv_cfg.rc_setting.forbid5, 0, __string2u32 , "100"},
-    { "forbid6", (void *)&ssv_cfg.rc_setting.forbid6, 0, __string2u32 , "0"},
-    { "sample_pr_4", (void *)&ssv_cfg.rc_setting.sample_pr_4, 0, __string2u32 , "70"},
-    { "sample_pr_5", (void *)&ssv_cfg.rc_setting.sample_pr_5, 0, __string2u32 , "85"},
-    { "sample_pr_force", (void *)&ssv_cfg.rc_setting.force_sample_pr, 0, __string2u32 , "40"},
-    { "greentx", (void *)&ssv_cfg.greentx, 0, __string2u32 , "0x01e"},
-    { "directly_ack_low_threshold" ,(void *)&ssv_cfg.directly_ack_low_threshold, 0, __string2u32 , "64"},
-    { "directly_ack_high_threshold",(void *)&ssv_cfg.directly_ack_high_threshold, 0, __string2u32 , "1024"},
+    { "beacon_rssi_minimal", (void *)&tu_ssv_cfg.beacon_rssi_minimal, 0, __string2u32 , NULL},
+    { "force_chip_identity", (void *)&tu_ssv_cfg.force_chip_identity, 0, __string2u32 , NULL},
+    { "external_firmware_name", (void *)&tu_ssv_cfg.external_firmware_name[0], 0, __string2str, NULL},
+    { "ignore_firmware_version", (void *)&tu_ssv_cfg.ignore_firmware_version, 0, __string2u32, NULL},
+    { "use_sw_cipher", (void *)&tu_ssv_cfg.use_sw_cipher, 0, __string2u32, NULL},
+    { "rc_ht_support_cck", (void *)&tu_ssv_cfg.rc_ht_support_cck, 0, __string2u32 , "1"},
+    { "auto_rate_enable", (void *)&tu_ssv_cfg.auto_rate_enable, 0, __string2u32 , "1"},
+    { "rc_rate_idx_set", (void *)&tu_ssv_cfg.rc_rate_idx_set, 0, __string2u32 , "0x7777"},
+    { "rc_retry_set", (void *)&tu_ssv_cfg.rc_retry_set, 0, __string2u32 , "0x4444"},
+    { "rc_mf", (void *)&tu_ssv_cfg.rc_mf, 0, __string2u32 , NULL},
+    { "rc_long_short", (void *)&tu_ssv_cfg.rc_long_short, 0, __string2u32 , NULL},
+    { "rc_ht40", (void *)&tu_ssv_cfg.rc_ht40, 0, __string2u32 , NULL},
+    { "rc_phy_mode" , (void *)&tu_ssv_cfg.rc_phy_mode, 0, __string2u32 , "3"},
+ { "tx_id_threshold" , (void *)&tu_ssv_cfg.tx_id_threshold, 0, __string2u32 , NULL},
+ { "tx_page_threshold" , (void *)&tu_ssv_cfg.tx_page_threshold, 0, __string2u32 , NULL},
+ { "max_rx_aggr_size", (void *)&tu_ssv_cfg.max_rx_aggr_size, 0, __string2u32 , "64"},
+ { "online_reset", (void *)&tu_ssv_cfg.online_reset, 0, __string2u32 , "0x00f"},
+ { "rx_burstread", (void *)&tu_ssv_cfg.rx_burstread, 0, __string2bool , "0"},
+    { "hw_rx_agg_cnt", (void *)&tu_ssv_cfg.hw_rx_agg_cnt, 0, __string2u32 , "3"},
+ { "hw_rx_agg_method_3", (void *)&tu_ssv_cfg.hw_rx_agg_method_3, 0, __string2bool , "0"},
+ { "hw_rx_agg_timer_reload", (void *)&tu_ssv_cfg.hw_rx_agg_timer_reload, 0, __string2u32 , "20"},
+ { "usb_hw_resource", (void *)&tu_ssv_cfg.usb_hw_resource, 0, __string2u32 , "0"},
+ { "tx_stuck_detect", (void *)&tu_ssv_cfg.tx_stuck_detect, 0, __string2bool , "0"},
+ { "clk_src_80m", (void *)&tu_ssv_cfg.clk_src_80m, 0, __string2bool , "1"},
+ { "rts_thres_len", (void *)&tu_ssv_cfg.rts_thres_len, 0, __string2u32 , "0"},
+    { "cci", (void *)&tu_ssv_cfg.cci, 0, __string2u32 , "0x19"},
+    { "bk_txq_size", (void *)&tu_ssv_cfg.bk_txq_size, 0, __string2u32 , "6"},
+    { "be_txq_size", (void *)&tu_ssv_cfg.be_txq_size, 0, __string2u32 , "10"},
+    { "vi_txq_size", (void *)&tu_ssv_cfg.vi_txq_size, 0, __string2u32 , "10"},
+    { "vo_txq_size", (void *)&tu_ssv_cfg.vo_txq_size, 0, __string2u32 , "8"},
+    { "manage_txq_size", (void *)&tu_ssv_cfg.manage_txq_size, 0, __string2u32 , "8"},
+    { "aggr_size_sel_pr", (void *)&tu_ssv_cfg.aggr_size_sel_pr, 0, __string2u32 , "95"},
+    { "aging_period", (void *)&tu_ssv_cfg.rc_setting.aging_period,0, __string2u32 , "2000"},
+    { "target_success_67", (void *)&tu_ssv_cfg.rc_setting.target_success_67, 0, __string2u32 , "55"},
+    { "target_success_5", (void *)&tu_ssv_cfg.rc_setting.target_success_5 , 0, __string2u32 , "78"},
+    { "target_success_4", (void *)&tu_ssv_cfg.rc_setting.target_success_4 , 0, __string2u32 , "70"},
+    { "target_success", (void *)&tu_ssv_cfg.rc_setting.target_success , 0, __string2u32 , "50"},
+    { "up_pr", (void *)&tu_ssv_cfg.rc_setting.up_pr, 0, __string2u32 , "70"},
+    { "up_pr3", (void *)&tu_ssv_cfg.rc_setting.up_pr3, 0, __string2u32 , "85"},
+    { "up_pr4", (void *)&tu_ssv_cfg.rc_setting.up_pr4, 0, __string2u32 , "97"},
+    { "up_pr5", (void *)&tu_ssv_cfg.rc_setting.up_pr5, 0, __string2u32 , "70"},
+    { "up_pr6", (void *)&tu_ssv_cfg.rc_setting.up_pr6, 0, __string2u32 , "70"},
+    { "forbid", (void *)&tu_ssv_cfg.rc_setting.forbid, 0, __string2u32 , "0"},
+    { "forbid3", (void *)&tu_ssv_cfg.rc_setting.forbid3, 0, __string2u32 , "0"},
+    { "forbid4", (void *)&tu_ssv_cfg.rc_setting.forbid4, 0, __string2u32 , "350"},
+    { "forbid5", (void *)&tu_ssv_cfg.rc_setting.forbid5, 0, __string2u32 , "100"},
+    { "forbid6", (void *)&tu_ssv_cfg.rc_setting.forbid6, 0, __string2u32 , "0"},
+    { "sample_pr_4", (void *)&tu_ssv_cfg.rc_setting.sample_pr_4, 0, __string2u32 , "70"},
+    { "sample_pr_5", (void *)&tu_ssv_cfg.rc_setting.sample_pr_5, 0, __string2u32 , "85"},
+    { "sample_pr_force", (void *)&tu_ssv_cfg.rc_setting.force_sample_pr, 0, __string2u32 , "40"},
+    { "greentx", (void *)&tu_ssv_cfg.greentx, 0, __string2u32 , "0x119"},
+    { "gt_stepsize", (void *)&tu_ssv_cfg.gt_stepsize, 0, __string2u32 , "3"},
+    { "gt_max_attenuation", (void *)&tu_ssv_cfg.gt_max_attenuation, 0, __string2u32 , "15"},
+    { "autosgi", (void *)&tu_ssv_cfg.auto_sgi, 0, __string2u32 , "0x1"},
+    { "directly_ack_low_threshold" ,(void *)&tu_ssv_cfg.directly_ack_low_threshold, 0, __string2u32 , "64"},
+    { "directly_ack_high_threshold",(void *)&tu_ssv_cfg.directly_ack_high_threshold, 0, __string2u32 , "1024"},
+    { "txrxboost_prio", (void *)&tu_ssv_cfg.txrxboost_prio, 0, __string2u32 , "20"},
+    { "txrxboost_low_threshold",(void *)&tu_ssv_cfg.txrxboost_low_threshold, 0, __string2u32 , "64"},
+    { "txrxboost_high_threshold",(void *)&tu_ssv_cfg.txrxboost_high_threshold, 0, __string2u32 , "256"},
+    { "rx_threshold", (void *)&tu_ssv_cfg.rx_threshold, 0, __string2u32 , "64"},
+    { "force_xtal_fo", (void *)&tu_ssv_cfg.force_xtal_fo, 0, __string2u32 , NULL},
+    { "disable_dpd", (void *)&tu_ssv_cfg.disable_dpd, 0, __string2u32 , "0"},
+    { "mic_err_notify", (void *)&tu_ssv_cfg.mic_err_notify, 0, __string2u32 , "0"},
+    { "domain", (void *)&tu_ssv_cfg.domain, 0xff, __string2u32 , NULL},
     { NULL, NULL, 0, NULL, NULL},
 };
-EXPORT_SYMBOL(cfg_cmds);
+EXPORT_SYMBOL(tu_cfg_cmds);
 static int ssv_cmd_cfg(struct ssv_softc *sc, int argc, char *argv[])
 {
     int s;
     struct ssv_cmd_data *cmd_data = &sc->cmd_data;
     if ((argc == 2) && (strcmp(argv[1], "reset") == 0)) {
-        memset(&ssv_cfg, 0, sizeof(ssv_cfg));
+        memset(&tu_ssv_cfg, 0, sizeof(tu_ssv_cfg));
         return 0;
     } else if ((argc == 2) && (strcmp(argv[1], "show") == 0)) {
         snprintf_res(cmd_data, ">> ssv6xxx config:\n");
-        snprintf_res(cmd_data, "    hw_caps = 0x%08x\n", ssv_cfg.hw_caps);
-        snprintf_res(cmd_data, "    def_chan = %d\n", ssv_cfg.def_chan);
-        snprintf_res(cmd_data, "    wifi_tx_gain_level_gn = %d\n", ssv_cfg.wifi_tx_gain_level_gn);
-        snprintf_res(cmd_data, "    wifi_tx_gain_level_b = %d\n", ssv_cfg.wifi_tx_gain_level_b);
+        snprintf_res(cmd_data, "    hw_caps = 0x%08x\n", tu_ssv_cfg.hw_caps);
+        snprintf_res(cmd_data, "    def_chan = %d\n", tu_ssv_cfg.def_chan);
+        snprintf_res(cmd_data, "    wifi_tx_gain_level_gn = %d\n", tu_ssv_cfg.wifi_tx_gain_level_gn);
+        snprintf_res(cmd_data, "    wifi_tx_gain_level_b = %d\n", tu_ssv_cfg.wifi_tx_gain_level_b);
         snprintf_res(cmd_data, "    sta-mac = %02x:%02x:%02x:%02x:%02x:%02x",
-            ssv_cfg.maddr[0][0], ssv_cfg.maddr[0][1], ssv_cfg.maddr[0][2],
-            ssv_cfg.maddr[0][3], ssv_cfg.maddr[0][4], ssv_cfg.maddr[0][5]);
+            tu_ssv_cfg.maddr[0][0], tu_ssv_cfg.maddr[0][1], tu_ssv_cfg.maddr[0][2],
+            tu_ssv_cfg.maddr[0][3], tu_ssv_cfg.maddr[0][4], tu_ssv_cfg.maddr[0][5]);
         snprintf_res(cmd_data, "\n");
         return 0;
     }
     if (argc != 4)
         return -1;
-    for(s = 0; cfg_cmds[s].cfg_cmd != NULL; s++) {
-        if (strcmp(cfg_cmds[s].cfg_cmd, argv[1]) == 0) {
-            cfg_cmds[s].translate_func(argv[3],
-                cfg_cmds[s].var, cfg_cmds[s].arg);
+    for(s = 0; tu_cfg_cmds[s].cfg_cmd != NULL; s++) {
+        if (strcmp(tu_cfg_cmds[s].cfg_cmd, argv[1]) == 0) {
+            tu_cfg_cmds[s].translate_func(argv[3],
+                tu_cfg_cmds[s].var, tu_cfg_cmds[s].arg);
             snprintf_res(cmd_data, "");
             return 0;
         }
@@ -665,12 +685,11 @@ static void _dump_sta_info (struct ssv_softc *sc,
                 "        Station %d: %d\n"
                 "             Address: %02X:%02X:%02X:%02X:%02X:%02X\n"
                 "             WISD: %d\n"
-                "             AID: %d\n"
-                "             Sleep: %d\n",
+                "             AID: %d\n",
                 sta_idx, priv_sta->sta_idx,
                 sta_info->sta->addr[0], sta_info->sta->addr[1], sta_info->sta->addr[2],
                 sta_info->sta->addr[3], sta_info->sta->addr[4], sta_info->sta->addr[5],
-                sta_info->hw_wsid, sta_info->aid, sta_info->sleeping);
+                sta_info->hw_wsid, sta_info->aid);
     }
 }
 void ssv6xxx_dump_sta_info (struct ssv_softc *sc)
@@ -686,18 +705,20 @@ void ssv6xxx_dump_sta_info (struct ssv_softc *sc)
             snprintf_res(cmd_data, "    VIF: %d is not used.\n", j);
             continue;
         }
-        snprintf_res(cmd_data,
-                "    VIF: %d - [%02X:%02X:%02X:%02X:%02X:%02X] type[%d] p2p[%d]\n", j,
-                vif->addr[0], vif->addr[1], vif->addr[2],
-                vif->addr[3], vif->addr[4], vif->addr[5], vif->type, vif->p2p);
+         snprintf_res(cmd_data,
+                 "    VIF: %d - [%02X:%02X:%02X:%02X:%02X:%02X] type[%d] p2p[%d] p2p_status[%d] channel[%d]\n", j,
+                 vif->addr[0], vif->addr[1], vif->addr[2],
+                 vif->addr[3], vif->addr[4], vif->addr[5], vif->type, vif->p2p, sc->p2p_status, sc->hw_chan);
         priv_vif = (struct ssv_vif_priv_data *)(vif->drv_priv);
+         snprintf_res(cmd_data,
+                 "           - sta asleep mask[%08X]\n", priv_vif->sta_asleep_mask);
         list_for_each_entry(sta_priv_iter, &priv_vif->sta_list, list){
-            if ((sta_priv_iter->sta_info->s_flags & STA_FLAG_VALID) == 0) {
+            if ((sc->sta_info[sta_priv_iter->sta_idx].s_flags & STA_FLAG_VALID) == 0) {
                 snprintf_res(cmd_data, "    STA: %d  is not valid.\n", sta_idx);
                 continue;
             }
             _dump_sta_info(sc, &sc->vif_info[priv_vif->vif_idx],
-                           sta_priv_iter->sta_info, sta_idx);
+                           &sc->sta_info[sta_priv_iter->sta_idx], sta_idx);
             sta_idx++;
         }
     }
@@ -954,10 +975,20 @@ static int ssv_cmd_mac(struct ssv_softc *sc, int argc, char *argv[])
         else
             snprintf_res(cmd_data, "  Current Rate Index: auto\n");
         return 0;
+    } else if ((argc == 2) && (!strcmp(argv[1], "setting"))){
+        snprintf_res(cmd_data, "tx_cfg threshold:\n");
+        snprintf_res(cmd_data, "\t tx_id_threshold %d tx_cfg tx_lowthreshold_id_trigger %d tx_page_threshold %d\n",
+            sc->sh->tx_info.tx_id_threshold, sc->sh->tx_info.tx_lowthreshold_id_trigger,
+            sc->sh->tx_info.tx_page_threshold);
+        snprintf_res(cmd_data, "rx_cfg threshold:\n");
+        snprintf_res(cmd_data, "\t rx_id_threshold %d  rx_page_threshold %d\n",
+            sc->sh->rx_info.rx_id_threshold, sc->sh->rx_info.rx_page_threshold);
+        snprintf_res(cmd_data, "tx page available %d\n" , sc->sh->tx_page_available);
     } else {
         snprintf_res(cmd_data, "mac [rxq] [show]\n");
         snprintf_res(cmd_data, "mac [set|get] [rate] [auto|idx]\n");
         snprintf_res(cmd_data, "mac [rx|tx] [eable|disable]\n");
+        snprintf_res(cmd_data, "mac [setting]\n");
     }
     return 0;
 }
@@ -1410,7 +1441,7 @@ static int ssv_cmd_iqk (struct ssv_softc *sc, int argc, char *argv[]) {
     }
 }
 #endif
-#define CLI_VERSION "0.03"
+#define CLI_VERSION "0.08"
 static int ssv_cmd_version (struct ssv_softc *sc, int argc, char *argv[]) {
     u32 regval;
     char chip_id[24] = "";
@@ -1420,19 +1451,9 @@ static int ssv_cmd_version (struct ssv_softc *sc, int argc, char *argv[]) {
     ssv_cmd_get_chip_id(sc, chip_id);
     snprintf_res(cmd_data, "CHIP ID: %s \n", chip_id);
     snprintf_res(cmd_data, "# current Software mac version: %d\n", ssv_root_version);
-    snprintf_res(cmd_data, "SVN ROOT URL %s \n", SSV_ROOT_URl);
-    snprintf_res(cmd_data, "COMPILER HOST %s \n", COMPILERHOST);
     snprintf_res(cmd_data, "COMPILER DATE %s \n", COMPILERDATE);
-    snprintf_res(cmd_data, "COMPILER OS %s \n", COMPILEROS);
-    snprintf_res(cmd_data, "COMPILER OS ARCH %s \n", COMPILEROSARCH);
     SSV_GET_FW_VERSION(sc->sh, &regval);
     snprintf_res(cmd_data, "Firmware image version: %d\n", regval);
-    snprintf_res(cmd_data, "\n[Compiler Option!!]\n");
-    regval = sizeof(conf_parser) / sizeof(*conf_parser);
-    while (regval)
-    {
-        snprintf_res(cmd_data, "Define %s \n", conf_parser[--regval]);
-    };
     return 0;
 }
 static int ssv_cmd_tool(struct ssv_softc *sc, int argc, char *argv[])
@@ -1710,6 +1731,59 @@ static int ssv_cmd_directack(struct ssv_softc *sc, int argc, char *argv[])
     }
     return 0;
 }
+static int ssv_cmd_txrxboost(struct ssv_softc *sc, int argc, char *argv[])
+{
+    struct ssv_cmd_data *cmd_data = &sc->cmd_data;
+    char *endp;
+    if ((argc == 2) && (!strcmp(argv[1], "show"))) {
+        snprintf_res(cmd_data, ">> ampdu_tx_frame = %d\n", atomic_read(&sc->ampdu_tx_frame));
+        snprintf_res(cmd_data, ">> txrxboost_prio = %d\n", sc->sh->cfg.txrxboost_prio);
+        snprintf_res(cmd_data, ">> txrxboost_low_threshold = %d\n", sc->sh->cfg.txrxboost_low_threshold);
+        snprintf_res(cmd_data, ">> txrxboost_high_threshold = %d\n", sc->sh->cfg.txrxboost_high_threshold);
+        return 0;
+    } else if ((argc == 3) && (!strcmp(argv[1], "prio"))) {
+        u32 prio = simple_strtoul(argv[2], &endp, 10);
+        sc->sh->cfg.txrxboost_prio = (prio > (MAX_RT_PRIO-1))?(MAX_RT_PRIO-1):((prio < 0)?0:prio);
+        snprintf_res(cmd_data, ">> Set txrxboost_prio = %d\n", sc->sh->cfg.txrxboost_prio);
+        return 0;
+    } else if ((argc == 3) && (!strcmp(argv[1], "low_threshold"))) {
+        sc->sh->cfg.txrxboost_low_threshold = simple_strtoul(argv[2], &endp, 10);
+        snprintf_res(cmd_data, ">> Set txrxboost_low_threshold = %d\n", sc->sh->cfg.txrxboost_low_threshold);
+        return 0;
+    } else if ((argc == 3) && (!strcmp(argv[1], "high_threshold"))) {
+        sc->sh->cfg.txrxboost_high_threshold = simple_strtoul(argv[2], &endp, 10);
+        snprintf_res(cmd_data, ">> Set txrxboost_high_threshold = %d\n", sc->sh->cfg.txrxboost_high_threshold);
+        return 0;
+    } else {
+        snprintf_res(cmd_data, "\n txrxboost [show|prio|low_threshold|high_threshold] [value] \n");
+        return 0;
+    }
+    return 0;
+}
+static int ssv_cmd_txrx_skb_q(struct ssv_softc *sc, int argc, char *argv[])
+{
+    struct ssv_cmd_data *cmd_data = &sc->cmd_data;
+    struct ssv6xxx_hci_ctrl *hci_ctrl = sc->sh->hci.hci_ctrl;
+    int txqid;
+    char *endp;
+    if ((argc == 2) && (!strcmp(argv[1], "show"))) {
+        snprintf_res(cmd_data, ">> tx_skb_q = %u\n", skb_queue_len(&sc->tx_skb_q));
+        snprintf_res(cmd_data, ">> rx_skb_q = %u\n", skb_queue_len(&sc->rx_skb_q));
+        for(txqid=0; txqid<SSV_HW_TXQ_NUM; txqid++) {
+            snprintf_res(cmd_data, ">> hw_txq[%d] = %u\n", txqid, skb_queue_len(&hci_ctrl->hw_txq[txqid].qhead));
+        }
+        snprintf_res(cmd_data, ">> rx_threshold = %d\n", sc->sh->cfg.rx_threshold);
+        return 0;
+    } else if ((argc == 3) && (!strcmp(argv[1], "rx_threshold"))) {
+        sc->sh->cfg.rx_threshold = simple_strtoul(argv[2], &endp, 10);
+        snprintf_res(cmd_data, ">> Set rx_threshold = %d\n", sc->sh->cfg.rx_threshold);
+        return 0;
+    } else {
+        snprintf_res(cmd_data, "\n txrx_skb_q [show|rx_threshold] [value] \n");
+        return 0;
+    }
+    return 0;
+}
 #ifdef SSV_SUPPORT_HAL
 static int ssv_cmd_log(struct ssv_softc *sc, int argc, char *argv[])
 {
@@ -1800,6 +1874,18 @@ static int ssv_cmd_log(struct ssv_softc *sc, int argc, char *argv[])
    sc->sh->priv->dbg_control = false;
         }
         snprintf_res(cmd_data, "  log hwif %s\n", ((sc->log_ctrl & LOG_HWIF) ? "enable": "disable"));
+ } else if ((argc == 3) && (!strcmp(argv[1], "flash_bin"))){
+        if(!strcmp(argv[2], "enable")){
+            sc->log_ctrl |= LOG_FLASH_BIN;
+        } else {
+            sc->log_ctrl &= ~(LOG_FLASH_BIN);
+        }
+        snprintf_res(cmd_data, "  log flash_bin %s\n", ((sc->log_ctrl & LOG_FLASH_BIN) ? "enable": "disable"));
+ } else if ((argc == 3) && (!strcmp(argv[1], "spectrum"))){
+        if (!strcmp(argv[2], "enable")) {
+            snprintf_res(cmd_data, "  Spectrum log is in kernel log\n");
+            HAL_CMD_SPECTRUM(sc->sh);
+        }
  } else if ((argc == 3) && (!strcmp(argv[1], "hex"))) {
   if (1 != sscanf(argv[2], "%x", &log_hex)) {
             snprintf_res(cmd_data, " log hex hexstring\n");
@@ -1841,16 +1927,23 @@ static int ssv_cmd_log(struct ssv_softc *sc, int argc, char *argv[])
          snprintf_res(cmd_data, " log ram_size [size] Kbytes\n");
   }
   return 0;
+    } else if ((argc == 3) && (!strcmp(argv[1], "regw"))){
+  if(!strcmp(argv[2], "enable")){
+            sc->log_ctrl |= LOG_REGW;
+        } else {
+            sc->log_ctrl &= ~(LOG_REGW);
+        }
+        snprintf_res(cmd_data, "  log regw %s\n", ((sc->log_ctrl & LOG_REGW) ? "enable": "disable"));
  } else {
         snprintf_res(cmd_data, " log log_to_ram [enable | disable]\n");
         snprintf_res(cmd_data, " log ram_size [size] kb\n");
         snprintf_res(cmd_data, " log [category] [param] [enablel | disable]\n\n");
   snprintf_res(cmd_data, " category: tx_desc, tx_frame, rx_desc, ampdu, beacon\n");
-  snprintf_res(cmd_data, "           rate_control, rate_report, hci, hwif\n\n");
+  snprintf_res(cmd_data, "           rate_control, rate_report, hci, hwif, regw\n\n");
         snprintf_res(cmd_data, " ampdu param: ssn, dbg, err\n");
         return 0;
     }
-    snprintf_res(cmd_data, "  log_ctrl %x\n", sc->log_ctrl);
+    snprintf_res(cmd_data, "  log_ctrl 0x%x\n", sc->log_ctrl);
     return 0;
 }
 static int ssv_cmd_chan(struct ssv_softc *sc, int argc, char *argv[])
@@ -1864,15 +1957,56 @@ static int ssv_cmd_chan(struct ssv_softc *sc, int argc, char *argv[])
     bool support_chan = false;
     int i, band;
     if ((argc == 2) || (argc == 3)) {
-        ch = simple_strtoul(argv[1], &endp, 0);
-        if (argc == 3) {
-            if (!strcmp(argv[2], "+"))
-                type = NL80211_CHAN_HT40PLUS;
-            else if (!strcmp(argv[2], "-"))
-                type = NL80211_CHAN_HT40MINUS;
-            else
-                type = NL80211_CHAN_HT20;
+        if (argc == 2) {
+            if (!strcmp(argv[1], "fixed") || !strcmp(argv[1], "auto")) {
+                if (!strcmp(argv[1], "fixed"))
+                    sc->sc_flags |= SC_OP_CHAN_FIXED;
+                if (!strcmp(argv[1], "auto"))
+                    sc->sc_flags &= ~SC_OP_CHAN_FIXED;
+                snprintf_res(cmd_data, "\n %s channel fixed\n", ((sc->sc_flags & SC_OP_CHAN_FIXED) ? "Force" : "Clear"));
+                return 0;
+            }
         }
+        ch = simple_strtoul(argv[1], &endp, 0);
+        if (ch < 1) {
+            snprintf_res(cmd_data, "\n  Channel syntax error.\n");
+            return 0;
+        }
+        if (argc == 3) {
+            if (!strcmp(argv[2], "bw40")) {
+                if ((ch == 3) || (ch == 4) || (ch == 5) || (ch == 6) ||
+                    (ch == 7) || (ch == 8) || (ch == 9) || (ch == 10) ||
+                    (ch == 11) || (ch == 38) || (ch == 42) || (ch == 46) ||
+                    (ch == 50) || (ch == 54) || (ch == 58) || (ch == 62) ||
+                    (ch == 102) || (ch == 106) || (ch == 110) || (ch == 114) ||
+                    (ch == 118) || (ch == 122) || (ch == 126) || (ch == 130) ||
+                    (ch == 134) || (ch == 138) || (ch == 142) || (ch == 151) ||
+                    (ch == 155) || (ch == 159)) {
+                        type = NL80211_CHAN_HT40PLUS;
+                        ch = ch - 2;
+                } else {
+                    snprintf_res(cmd_data, "\n  Channel syntax error.\n");
+                    return 0;
+                }
+            } else if (!strcmp(argv[2], "+")) {
+                if ((ch >= 8) && (ch <= 13)) {
+                    snprintf_res(cmd_data, "\n  Channel syntax error.\n");
+                    return 0;
+                }
+                type = NL80211_CHAN_HT40PLUS;
+            } else if (!strcmp(argv[2], "-")) {
+                if ((ch >= 1) && (ch <= 4)) {
+                    snprintf_res(cmd_data, "\n  Channel syntax error.\n");
+                    return 0;
+                }
+                type = NL80211_CHAN_HT40MINUS;
+            } else {
+                snprintf_res(cmd_data, "\n  Channel syntax error.\n");
+                return 0;
+            }
+        }
+        if (argc == 2)
+            type = NL80211_CHAN_HT20;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
         for (band = 0; band < NUM_NL80211_BANDS; band++) {
 #else
@@ -1900,7 +2034,7 @@ static int ssv_cmd_chan(struct ssv_softc *sc, int argc, char *argv[])
         else
             snprintf_res(cmd_data, "\n  invalid ch %d\n", ch);
     } else {
-        snprintf_res(cmd_data, "\n chan [chan_number] [chan_type]\n");
+        snprintf_res(cmd_data, "\n ch [chan_number] [chan_type]\n");
     }
     return 0;
 }
@@ -1961,7 +2095,7 @@ static int ssv_cmd_txgen(struct ssv_softc *sc, int argc, char *argv[])
        int i;
        for (i = 0; i < count; i++) {
            HAL_CMD_TXGEN(sc->sh);
-           udelay(1000);
+           mdelay(1);
        }
     }
     snprintf_res(cmd_data, "\n tx_gen %d times done \n", count);
@@ -1980,6 +2114,11 @@ static int ssv_cmd_hwq_limit(struct ssv_softc *sc, int argc, char *argv[])
     } else {
         snprintf_res(cmd_data, "%s [bk|be|vi|vo|mng] [queue limit]\n\n", argv[0]);
     }
+    return 0;
+}
+static int ssv_cmd_efuse(struct ssv_softc *sc, int argc, char *argv[])
+{
+    HAL_CMD_EFUSE(sc->sh, argc, argv);
     return 0;
 }
 #endif
@@ -2011,10 +2150,12 @@ struct ssv_cmd_table cmd_table[] = {
     { "check", ssv_cmd_check, "dump all allocate packet buffer" , 128},
     { "rawpkt", ssv_cmd_rawpkt, "send raw packet" , 512},
     { "directack", ssv_cmd_directack, "directly ack control" , 512},
+    { "txrxboost", ssv_cmd_txrxboost, "tx/rx kernel thread priority boost" , 512},
+    { "txrx_skb_q", ssv_cmd_txrx_skb_q, "tx/rx skb queue control" , 512},
 #ifdef SSV_SUPPORT_HAL
     { "log", ssv_cmd_log, "enable debug log" , 256},
-    { "chan", ssv_cmd_chan, "change channel by manual" , 128},
-    { "cali", ssv_cmd_cali, "calibration for ssv6006" , 2048},
+    { "ch", ssv_cmd_chan, "change channel by manual" , 128},
+    { "cali", ssv_cmd_cali, "calibration for ssv6006" , 4096},
     { "init", ssv_cmd_init, "re-init " , 64},
     { "rc", ssv_cmd_rc, "fix rate set for ssv6006" , 4096},
     { "lpbk", ssv_cmd_lpbk, "lpbk test for ssv6006" , 4096},
@@ -2023,6 +2164,7 @@ struct ssv_cmd_table cmd_table[] = {
  { "txgen", ssv_cmd_txgen, "auto gen tx " , 128},
  { "rf", ssv_cmd_rf, "change parameters for rf tool" , 512},
  { "hwqlimit", ssv_cmd_hwq_limit, "Set software limit for hardware queue" , 512},
+    { "efuse", ssv_cmd_efuse, "efuse read/write." , 2048},
 #endif
     { NULL, NULL, NULL, 0},
 };
@@ -2086,7 +2228,9 @@ int ssv_cmd_submit(struct ssv_cmd_data *cmd_data, char *cmd)
                 cmd_data->rsbuf_len = 0;
                 cmd_data->rsbuf_size = sc_tbl->result_buffer_size;
                 cmd_data->cmd_in_proc = true;
+                down_read(&sc->sta_info_sem);
                 ret = sc_tbl->cmd_func_ptr(sc, sg_argc, sg_argv);
+                up_read(&sc->sta_info_sem);
                 if (ret < 0) {
                     strcpy(cmd_data->ssv6xxx_result_buf, "Invalid command !\n");
                 }

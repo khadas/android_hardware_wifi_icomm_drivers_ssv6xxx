@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -71,6 +70,10 @@ struct ssv6xxx_rx_buf {
     void *rx_buf;
     unsigned int rx_filled;
     int rx_res;
+};
+struct ssv6xxx_usb_work_struct {
+    struct work_struct work;
+    struct ssv6xxx_usb_glue *glue;
 };
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
 int ssv6xxx_usb_init(void);

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -19,7 +18,11 @@
 #include <linux/delay.h>
 #include <linux/version.h>
 #include <linux/time.h>
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #include <ssv6200.h>
 #include "dev.h"
 #include "ssv6xxx_debugfs.h"
@@ -51,7 +54,7 @@ static const struct file_operations queue_status_fops
     = { .read = queue_status_read,
         .open = queue_status_open };
 #endif
-int ssv6xxx_init_debugfs (struct ssv_softc *sc, const char *name)
+int tu_ssv6xxx_init_debugfs (struct ssv_softc *sc, const char *name)
 {
 #ifdef CONFIG_SSV6XXX_DEBUGFS
     struct ieee80211_hw *hw = sc->hw;

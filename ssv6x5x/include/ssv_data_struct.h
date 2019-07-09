@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -26,11 +25,11 @@ struct ssv6xxx_queue {
 struct ssv6xxx_list_node {
     struct list_head list;
 };
-static inline void ssv6xxx_init_queue(struct ssv6xxx_queue *ssv_queue) {
+static inline void tu_ssv6xxx_init_queue(struct ssv6xxx_queue *ssv_queue) {
     INIT_LIST_HEAD(&ssv_queue->queue);
     spin_lock_init(&ssv_queue->lock);
 }
-static inline void ssv6xxx_init_list_node(struct ssv6xxx_list_node *node) {
+static inline void tu_ssv6xxx_init_list_node(struct ssv6xxx_list_node *node) {
     INIT_LIST_HEAD(&node->list);
 }
 static inline void ssv6xxx_enqueue_list_node(struct ssv6xxx_list_node *node, struct ssv6xxx_queue *ssv_queue) {

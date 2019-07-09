@@ -21,7 +21,7 @@
 #include <linux/jiffies.h>
 #include <ssv6200.h>
 #include "hctrl.h"
-extern void sdio_clk_always_on(void);
+extern void sdio_clk_always_on(int on);
 MODULE_AUTHOR("iComm Semiconductor Co., Ltd");
 MODULE_DESCRIPTION("HCI driver for SSV6xxx 802.11n wireless LAN cards.");
 MODULE_SUPPORTED_DEVICE("SSV6xxx WLAN cards");
@@ -1112,7 +1112,7 @@ static int __init ssv6xxx_hci_init(void)
 #ifdef CONFIG_SSV6200_CLI_ENABLE
     extern struct ssv6xxx_hci_ctrl *ssv_dbg_ctrl_hci;
 #endif
-    sdio_clk_always_on();
+    sdio_clk_always_on(1);
     ctrl_hci = kzalloc(sizeof(*ctrl_hci), GFP_KERNEL);
     if (ctrl_hci == NULL)
         return -ENOMEM;
@@ -1141,6 +1141,7 @@ static void __exit ssv6xxx_hci_exit(void)
 #ifdef CONFIG_SSV6200_CLI_ENABLE
     ssv_dbg_ctrl_hci = NULL;
 #endif
+    sdio_clk_always_on(0);
 }
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
 EXPORT_SYMBOL(ssv6xxx_hci_init);

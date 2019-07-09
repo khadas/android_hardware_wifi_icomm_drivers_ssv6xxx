@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -18,6 +17,7 @@
 #define _SDIO_DEF_H_ 
 #include <linux/scatterlist.h>
 #define BASE_SDIO 0
+#define SD_REG_BASE 0xc0000800
 #define REG_DATA_IO_PORT_0 (BASE_SDIO + 0x00)
 #define REG_DATA_IO_PORT_1 (BASE_SDIO + 0x01)
 #define REG_DATA_IO_PORT_2 (BASE_SDIO + 0x02)
@@ -90,9 +90,11 @@ struct sdio_scatter_req {
 #define CMD53_ARG_WRITE 1
 #define CMD53_ARG_BLOCK_BASIS 1
 #define CMD53_ARG_FIXED_ADDRESS 0
-#define CMD53_ARG_INCR_ADDRESS 1
-#ifdef CONFIG_FW_ALIGNMENT_CHECK
-#define SDIO_DMA_BUFFER_LEN 2048
+#define CMD53_ARG_INCR_ADDRESS  1
+
+
+#if defined(CONFIG_FW_ALIGNMENT_CHECK)
+#define SDIO_DMA_BUFFER_LEN			2048
 #endif
 #ifdef CONFIG_PM
 #define SDIO_COMMAND_BUFFER_LEN 256
@@ -118,4 +120,6 @@ struct sdio_scatter_req {
 #define SDIO_READY_FLAG_IDLE 0x2
 #define SDIO_READY_FLAG_BUSY_THRESHOLD 10000
 #define SDIO_READY_FLAG_BUSY_DELAY 5
+#define PLATFORM_DEF_DMA_ALIGN_SIZE 32
+#define PLATFORM_DMA_ALIGNED __attribute__ ((aligned(PLATFORM_DEF_DMA_ALIGN_SIZE)))
 #endif

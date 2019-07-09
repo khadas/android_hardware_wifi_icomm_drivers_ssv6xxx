@@ -1,7 +1,6 @@
 PLATFORMS = ssv6x5x
 
 KBUILD_TOP := $(PWD)/hardware/wifi/icomm/drivers/ssv6xxx/ssv6x5x
-#KBUILD_TOP := /mnt/nfsroot/weiguang.ruan/o-amlogic-mr1/hardware/wifi/icomm/drivers/ssv6xxx/ssv6x5x
 include $(KBUILD_TOP)/$(PLATFORMS).cfg
 include $(KBUILD_TOP)/platform-config.mak
 
@@ -34,21 +33,27 @@ KERN_SRCS += hci/ssv_hci.c
 KERN_SRCS += smac/init.c
 KERN_SRCS += smac/ssv_skb.c
 KERN_SRCS += smac/dev.c
-KERN_SRCS += smac/ssv_rc.c
-KERN_SRCS += smac/ssv_ht_rc.c
 KERN_SRCS += smac/ssv_rc_minstrel.c
 KERN_SRCS += smac/ssv_rc_minstrel_ht.c
 KERN_SRCS += smac/ap.c
 KERN_SRCS += smac/ampdu.c
+KERN_SRCS += smac/efuse.c
+KERN_SRCS += smac/ssv_pm.c
+KERN_SRCS += smac/ssv_skb.c
+
+ifeq ($(findstring -DCONFIG_SSV6XXX_DEBUGFS, $(ccflags-y)), -DCONFIG_SSV6XXX_DEBUGFS)
 KERN_SRCS += smac/ssv6xxx_debugfs.c
+endif
+
+ifeq ($(findstring -DUSE_LOCAL_CRYPTO, $(ccflags-y)), -DUSE_LOCAL_CRYPTO)
 KERN_SRCS += smac/sec_ccmp.c
 KERN_SRCS += smac/sec_tkip.c
 KERN_SRCS += smac/sec_wep.c
 KERN_SRCS += smac/wapi_sms4.c
 KERN_SRCS += smac/sec_wpi.c
-KERN_SRCS += smac/efuse.c
-KERN_SRCS += smac/ssv_pm.c
-KERN_SRCS += smac/ssv_skb.c
+endif
+
+
 ifeq ($(findstring -DCONFIG_SMARTLINK, $(ccflags-y)), -DCONFIG_SMARTLINK)
 KERN_SRCS += smac/ksmartlink.c
 endif
@@ -58,22 +63,34 @@ endif
 
 ifeq ($(findstring -DSSV_SUPPORT_HAL, $(ccflags-y)), -DSSV_SUPPORT_HAL)
 KERN_SRCS += smac/hal/hal.c
+
+ifeq ($(findstring -DSSV_SUPPORT_SSV6051, $(ccflags-y)), -DSSV_SUPPORT_SSV6051)
+KERN_SRCS += smac/ssv_rc.c
+KERN_SRCS += smac/ssv_ht_rc.c
 KERN_SRCS += smac/hal/ssv6051/ssv6051_mac.c
 KERN_SRCS += smac/hal/ssv6051/ssv6051_phy.c
 KERN_SRCS += smac/hal/ssv6051/ssv6051_cabrioA.c
 KERN_SRCS += smac/hal/ssv6051/ssv6051_cabrioE.c
+endif
+
 ifeq ($(findstring -DSSV_SUPPORT_SSV6006, $(ccflags-y)), -DSSV_SUPPORT_SSV6006)
-KERN_SRCS += smac/hal/ssv6006/ssv6006_common.c
+
+KERN_SRCS += hwif/usb/usb.c
+KERN_SRCS += smac/hal/ssv6006c/ssv6006_common.c
+KERN_SRCS += smac/hal/ssv6006c/ssv6006C_mac.c
+KERN_SRCS += smac/hal/ssv6006c/ssv6006_phy.c
+KERN_SRCS += smac/hal/ssv6006c/ssv6006_turismoC.c
+ifeq ($(findstring -DSSV_SUPPORT_SSV6006AB, $(ccflags-y)), -DSSV_SUPPORT_SSV6006AB)
 KERN_SRCS += smac/hal/ssv6006/ssv6006_mac.c
-KERN_SRCS += smac/hal/ssv6006/ssv6006C_mac.c
-KERN_SRCS += smac/hal/ssv6006/ssv6006_phy.c
 KERN_SRCS += smac/hal/ssv6006/ssv6006_cabrioA.c
 KERN_SRCS += smac/hal/ssv6006/ssv6006_geminiA.c
 KERN_SRCS += smac/hal/ssv6006/ssv6006_turismoA.c
 KERN_SRCS += smac/hal/ssv6006/ssv6006_turismoB.c
-KERN_SRCS += smac/hal/ssv6006/ssv6006_turismoC.c
-KERN_SRCS += hwif/usb/usb.c
 endif
+endif
+else
+KERN_SRCS += smac/ssv_rc.c
+KERN_SRCS += smac/ssv_ht_rc.c
 endif
 
 KERN_SRCS += hwif/sdio/sdio.c
@@ -92,7 +109,7 @@ endif
 $(KMODULE_NAME)-y += $(KERN_SRCS_S:.S=.o)
 $(KMODULE_NAME)-y += $(KERN_SRCS:.c=.o)
 
-obj-$(CONFIG_SSV6200_CORE) += $(KMODULE_NAME).o
+obj-$(CONFIG_SSV6X5X) += $(KMODULE_NAME).o
 
 all:module strip
 

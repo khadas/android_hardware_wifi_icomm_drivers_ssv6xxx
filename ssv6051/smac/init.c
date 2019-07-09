@@ -251,8 +251,9 @@ static void ssv6xxx_set_80211_hw_capab(struct ssv_softc *sc)
             ht_info->cap |= IEEE80211_HT_CAP_GRN_FLD;
 	}
             ht_info->cap |= HT_CAP_RX_STBC_ONE_STREAM<<IEEE80211_HT_CAP_RX_STBC_SHIFT;
-        if (sh->cfg.hw_caps & SSV6200_HT_CAP_SGI_20)
+        if (sh->cfg.hw_caps & SSV6200_HT_CAP_SGI_20){
             ht_info->cap |= IEEE80211_HT_CAP_SGI_20;
+	}
         ht_info->ampdu_factor = IEEE80211_HT_MAX_AMPDU_32K;
         ht_info->ampdu_density = IEEE80211_HT_MPDU_DENSITY_8;
         memset(&ht_info->mcs, 0, sizeof(ht_info->mcs));

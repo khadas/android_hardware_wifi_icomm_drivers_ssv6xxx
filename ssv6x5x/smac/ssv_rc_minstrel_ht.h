@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -90,6 +89,19 @@ struct ssv_minstrel_ht_sta {
     u8 cck_supported_short;
   struct ssv_minstrel_ht_mcs_group_data groups[MINSTREL_MAX_STREAMS * MINSTREL_STREAM_GROUPS + 1];
  struct ssv_minstrel_ampdu_rate_rpt ampdu_rpt_list[SSV_MINSTREL_AMPDU_RATE_RPTS];
+ u32 sgi_state_lgi_success;
+ u8 sgi_state_count;
+ u8 sgi_state;
+ u32 sgi_state_total;
+ u32 sgi_state_success;
+ u32 hw_retry_acc;
+    u32 hw_success_acc;
+};
+enum ssv6xxx_sgi_stat{
+ SGI_DETECT_MCS67,
+ SGI_DETECT_SGI,
+ SGI_FORBID_SGI,
+ SGI_ENABLE_SGI,
 };
 void ssv_minstrel_ht_init_sample_table(void);
 int ssv_minstrel_ht_update_rate(struct ssv_softc *sc, struct sk_buff *skb);

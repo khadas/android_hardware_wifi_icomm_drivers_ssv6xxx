@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -37,7 +36,7 @@ void ssv6xxx_early_suspend(void)
 #ifdef CONFIG_HAS_EARLYSUSPEND
     struct ssv_softc *sc = container_of(h, struct ssv_softc, early_suspend);
 #else
-    struct ssv_softc *sc = ssv6xxx_driver_attach(CABRIO_DRVER_NAME);
+    struct ssv_softc *sc = ssv6xxx_driver_attach(SSV_DRVER_NAME);
 #endif
     sc->ps_status = PWRSV_PREPARE;
     printk(KERN_INFO "ssv6xxx_early_suspend\n");
@@ -80,7 +79,7 @@ void ssv6xxx_late_resume(void)
 #ifdef CONFIG_HAS_EARLYSUSPEND
  struct ssv_softc *sc = container_of(h, struct ssv_softc, early_suspend);
 #else
- struct ssv_softc *sc = ssv6xxx_driver_attach(CABRIO_DRVER_NAME);
+ struct ssv_softc *sc = ssv6xxx_driver_attach(SSV_DRVER_NAME);
 #endif
     if(sc->ps_status == PWRSV_ENABLE)
     {

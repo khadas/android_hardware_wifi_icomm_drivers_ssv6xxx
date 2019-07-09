@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -16,7 +15,11 @@
 
 #ifndef _SSVSMART_CONFIG_H
 #define _SSVSMART_CONFIG_H 
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #include <ssv6200.h>
 #include <smac/dev.h>
 #ifdef CONFIG_SSV_SMARTLINK

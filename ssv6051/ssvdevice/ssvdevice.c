@@ -280,7 +280,7 @@ static void __exit ssvdevice_exit(void)
  remove_proc_entry(DEBUG_DIR_ENTRY, NULL);
     kfree(ssv6xxx_cmd_buf);
 }
-#if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
+#if 0// (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
 EXPORT_SYMBOL(ssvdevice_init);
 EXPORT_SYMBOL(ssvdevice_exit);
 #else

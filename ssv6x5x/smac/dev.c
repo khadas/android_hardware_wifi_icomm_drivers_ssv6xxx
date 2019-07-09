@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -20,7 +19,11 @@
 #include <linux/version.h>
 #include <linux/time.h>
 #include <linux/kthread.h>
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #include <net/cfg80211.h>
 #include <ssv6200.h>
 #include <hci/hctrl.h>
@@ -58,7 +61,6 @@
 #define MAX_TX_Q_LEN (64)
 #define LOW_TX_Q_LEN (MAX_TX_Q_LEN/2)
 #endif
-extern int ssv_tx_task_prio;
 static u16 bits_per_symbol[][2] =
 {
     { 26, 54 },
@@ -575,6 +577,10 @@ int ssv6xxx_rf_disable(struct ssv_hw *sh)
 {
    return SMAC_REG_SET_BITS(sh,ADR_CBR_HARD_WIRE_PIN_REGISTER,
              (RF_MODE_STANDBY << CBR_RG_MODE_SFT), CBR_RG_MODE_MSK);
+}
+void ssv6xxx_set_on3_enable(struct ssv_hw *sh, bool val)
+{
+    return;
 }
 int ssv6xxx_update_decision_table(struct ssv_softc *sc)
 {
@@ -1311,7 +1317,7 @@ void ssv6xxx_reset_sysplf(struct ssv_hw *sh)
 {
     SMAC_REG_SET_BITS(sh, ADR_BRG_SW_RST, (1 << MCU_SW_RST_SFT), MCU_SW_RST_MSK);
 }
-void ssv6xxx_init_iqk(struct ssv_hw *sh)
+void tu_ssv6xxx_init_iqk(struct ssv_hw *sh)
 {
 #ifdef CONFIG_SSV_CABRIO_E
     sh->iqk_cfg.cfg_xtal = SSV6XXX_IQK_CFG_XTAL_26M;
@@ -1367,11 +1373,8 @@ void ssv6xxx_edca_enable(struct ssv_hw *sh, bool val)
 {
  return;
 }
-void ssv6xxx_edca_stat(struct ssv_hw *sh, int *primary, int *secondary)
+void ssv6xxx_edca_stat(struct ssv_hw *sh)
 {
-    *primary = 0;
-    *secondary = 0;
- return;
 }
 void ssv6xxx_send_tx_poll_cmd(struct ssv_hw *sh, u32 type)
 {
@@ -1387,6 +1390,22 @@ int ssv6xxx_get_rx_desc_hdr_offset(struct sk_buff *skb)
     return rx_desc->hdr_offset;
 }
 void ssv6xxx_fill_lpbk_tx_desc(struct sk_buff *skb, int security, unsigned char rate)
+{
+    return;
+}
+int ssv6xxx_chk_rx_rate_desc(struct ssv_hw *sh, struct sk_buff *skb);
+{
+    return 0;
+}
+int ssv6xxx_update_efuse_setting(struct ssv_hw *sh)
+{
+    return 0;
+}
+void ssv6xxx_do_temperature_compensation(struct ssv_hw *sh);
+{
+    return;
+}
+void ssv6xxx_pll_chk(struct ssv_hw *sh);
 {
     return;
 }
@@ -1761,7 +1780,6 @@ static enum SSV_CIPHER_E _prepare_key (struct ieee80211_key_conf *key, struct ss
             cipher = SSV_CIPHER_WEP104;
             break;
         case WLAN_CIPHER_SUITE_TKIP:
-            key->flags |= IEEE80211_KEY_FLAG_GENERATE_MMIC;
             cipher = SSV_CIPHER_TKIP;
             break;
         case WLAN_CIPHER_SUITE_CCMP:
@@ -1992,7 +2010,7 @@ static int _set_pairwise_key_tkip_ccmp (struct ssv_softc *sc, struct ssv_vif_pri
     #endif
     if (sta_priv->has_hw_encrypt || sta_priv->has_hw_decrypt)
     {
-        SSV_SET_PAIRWISE_CIPHER_TYPE(sc->sh, cipher, sta_priv->sta_info->hw_wsid);
+        SSV_SET_PAIRWISE_CIPHER_TYPE(sc->sh, cipher, sc->sta_info[sta_priv->sta_idx].hw_wsid);
 #if 0
         ssv6200_hw_set_pair_type(sc->sh, SSV_CIPHER_NONE);
         sta_priv->has_hw_encrypt = false;
@@ -2008,7 +2026,7 @@ static int _set_pairwise_key_tkip_ccmp (struct ssv_softc *sc, struct ssv_vif_pri
         && (vif_priv->group_key_idx > 0))
     {
         SSV_SET_AES_TKIP_HW_CRYPTO_GROUP_KEY(sc, &sc->vif_info[vif_priv->vif_idx],
-                                          sta_priv->sta_info, &vif_priv->group_key_idx);
+                                          &sc->sta_info[sta_priv->sta_idx], &vif_priv->group_key_idx);
     }
     return ret;
 }
@@ -2227,11 +2245,17 @@ static int ssv6200_set_key(struct ieee80211_hw *hw,
         another_vif_group_cipher = another_vif_priv->group_cipher;
     }
 #endif
+    mutex_lock(&sc->mutex);
     if (sta)
     {
         sta_priv = (struct ssv_sta_priv_data *)sta->drv_priv;
         sta_idx = sta_priv->sta_idx;
-        sta_info = sta_priv->sta_info;
+        sta_info = &sc->sta_info[sta_idx];
+        if ((sta_info->s_flags & STA_FLAG_VALID) == 0) {
+            dev_warn(sc->dev, "%s(): sta_info is gone.\n", __func__);
+            ret = -ENODATA;
+            goto out;
+        }
     }
     BUG_ON((cmd!=SET_KEY) && (cmd!=DISABLE_KEY));
     if (!(sc->sh->cfg.hw_caps & SSV6200_HW_CAP_SECURITY))
@@ -2257,7 +2281,6 @@ static int ssv6200_set_key(struct ieee80211_hw *hw,
         ret = -EOPNOTSUPP;
         goto out;
     }
-    mutex_lock(&sc->mutex);
     switch (cmd)
     {
         case SET_KEY:
@@ -2353,7 +2376,6 @@ static int ssv6200_set_key(struct ieee80211_hw *hw,
                             SSV_SET_PAIRWISE_CIPHER_TYPE(sc->sh, ME_NONE, sta_info->hw_wsid);
                         }
                     }
-                    vif_priv->pair_cipher = ME_NONE;
                 }
                 if ((cipher == ME_WEP40) || (cipher == ME_WEP104))
                 {
@@ -2369,35 +2391,39 @@ static int ssv6200_set_key(struct ieee80211_hw *hw,
                 {
                     if ((key->keyidx == 0) && (sta_priv != NULL))
                     {
-                        #ifdef MULTI_THREAD_ENCRYPT
-                        unsigned long flags;
-                        INIT_WRITE_CRYPTO_DATA(crypto_data, &sta_priv->crypto_data);
-                        #endif
                         sta_priv->has_hw_decrypt = false;
                         sta_priv->has_hw_encrypt = false;
                         sta_priv->need_sw_encrypt = false;
                         sta_priv->use_mac80211_decrypt = false;
-                        #ifdef MULTI_THREAD_ENCRYPT
-                        if (crypto_data->ops && crypto_data->priv)
-                        {
-                            u32 sta_addr0_3 = *(u32 *)&sta->addr[0];
-                            u32 sta_addr4_5 = (u32)*(u16 *)&sta->addr[4];
-                            u32 removed_skb_num;
-                            START_WRITE_CRYPTO_DATA(crypto_data);
-                            crypto_data->ops->deinit(crypto_data->priv);
-                            crypto_data->priv = NULL;
-                            crypto_data->ops = NULL;
-                            END_WRITE_CRYPTO_DATA(crypto_data);
-                            spin_lock_irqsave(&sc->crypt_st_lock, flags);
-                            removed_skb_num = _remove_sta_skb_from_q(sc, &sc->preprocess_q,
-                                                                     sta_addr0_3, sta_addr4_5);
-                            spin_unlock_irqrestore(&sc->crypt_st_lock, flags);
-                            dev_err(sc->dev, "Clean up %d skb for STA %pM.\n", removed_skb_num, sta->addr);
+                        #ifdef USE_LOCAL_CRYPTO
+                        if (SSV_NEED_SW_CIPHER(sc->sh)) {
+                            INIT_WRITE_CRYPTO_DATA(crypto_data, &sta_priv->crypto_data);
+                            if (crypto_data->ops && crypto_data->priv)
+                            {
+                                #ifdef MULTI_THREAD_ENCRYPT
+                                unsigned long flags;
+                                u32 sta_addr0_3 = *(u32 *)&sta->addr[0];
+                                u32 sta_addr4_5 = (u32)*(u16 *)&sta->addr[4];
+                                u32 removed_skb_num;
+                                #endif
+                                START_WRITE_CRYPTO_DATA(crypto_data);
+                                crypto_data->ops->deinit(crypto_data->priv);
+                                crypto_data->priv = NULL;
+                                crypto_data->ops = NULL;
+                                END_WRITE_CRYPTO_DATA(crypto_data);
+                                #ifdef MULTI_THREAD_ENCRYPT
+                                spin_lock_irqsave(&sc->crypt_st_lock, flags);
+                                removed_skb_num = _remove_sta_skb_from_q(sc, &sc->preprocess_q,
+                                                                         sta_addr0_3, sta_addr4_5);
+                                spin_unlock_irqrestore(&sc->crypt_st_lock, flags);
+                                dev_err(sc->dev, "Clean up %d skb for STA %pM.\n", removed_skb_num, sta->addr);
+                                #endif
+                            }
                         }
                         #endif
                     }
-                    #ifdef MULTI_THREAD_ENCRYPT
-                    else
+                    #ifdef USE_LOCAL_CRYPTO
+                    else if (SSV_NEED_SW_CIPHER(sc->sh))
                     {
                         INIT_WRITE_CRYPTO_DATA(crypto_data, &vif_priv->crypto_data);
                         START_WRITE_CRYPTO_DATA(crypto_data);
@@ -2424,7 +2450,6 @@ static int ssv6200_set_key(struct ieee80211_hw *hw,
         default:
             ret = -EINVAL;
     }
-    mutex_unlock(&sc->mutex);
     if(sta_priv != NULL)
     {
         printk("sta: hw_en:%d, sw_en:%d, hw_de:%d, sw_de:%d,\n",
@@ -2441,6 +2466,7 @@ static int ssv6200_set_key(struct ieee80211_hw *hw,
     ret = -EOPNOTSUPP;
 #endif
 out:
+    mutex_unlock(&sc->mutex);
     printk(KERN_ERR "SET KEY %d\n", ret);
     HCI_WRITE_HW_CONFIG_OFF(sc->sh);
     return ret;
@@ -2512,13 +2538,13 @@ void ssv6xxx_pre_tx_cb(struct sk_buff *skb, void *args)
  if (tx_info->flags & IEEE80211_TX_CTL_AMPDU)
   ssv6xxx_ampdu_sent(sc->hw, skb);
 }
-#ifdef RATE_CONTROL_REALTIME_UPDATA
 void ssv6xxx_tx_rate_update(struct sk_buff *skb, void *args)
 {
     struct ssv_softc *sc = args;
 #ifdef SSV_SUPPORT_HAL
     HAL_TX_RATE_UPDATE(sc, skb);
 #else
+#ifdef RATE_CONTROL_REALTIME_UPDATE
     struct ieee80211_hdr *hdr;
     struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
     struct ssv6200_tx_desc *tx_desc;
@@ -2559,8 +2585,8 @@ void ssv6xxx_tx_rate_update(struct sk_buff *skb, void *args)
         }
     }
 #endif
-}
 #endif
+}
 #ifndef SSV_SUPPORT_HAL
 void ssv6xxx_update_txinfo (struct ssv_softc *sc, struct sk_buff *skb)
 {
@@ -2590,6 +2616,7 @@ void ssv6xxx_update_txinfo (struct ssv_softc *sc, struct sk_buff *skb)
     if (sta)
     {
         ssv_sta_priv = (struct ssv_sta_priv_data *)sta->drv_priv;
+        down_read(&sc->sta_info_sem);
         sta_info = ssv_sta_priv->sta_info;
     }
     if ((!sc->bq4_dtim) &&
@@ -2789,6 +2816,9 @@ void ssv6xxx_update_txinfo (struct ssv_softc *sc, struct sk_buff *skb)
         else {
         }
     }
+    if (sta) {
+        up_read(&sc->sta_info_sem);
+    }
 }
 void ssv6xxx_add_txinfo (struct ssv_softc *sc, struct sk_buff *skb)
 {
@@ -2799,6 +2829,7 @@ void ssv6xxx_add_txinfo (struct ssv_softc *sc, struct sk_buff *skb)
     ssv6xxx_update_txinfo(sc, skb);
 }
 #endif
+#if (!defined(SSV_SUPPORT_HAL) || defined(SSV_SUPPORT_SSV6051))
 int ssv6xxx_get_real_index(struct ssv_softc *sc, struct sk_buff *skb)
 {
     struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
@@ -2808,6 +2839,7 @@ int ssv6xxx_get_real_index(struct ssv_softc *sc, struct sk_buff *skb)
     ssv6xxx_rc_hw_rate_idx(sc, info, &ssv_rate);
     return ssv_rate.drate_hw_idx;
 }
+#endif
 static void ssv6xxx_update_wep_hw_security_setting(struct ssv_softc *sc, struct ssv_vif_priv_data *vif_priv, struct ieee80211_key_conf *hw_key)
 {
     u32 cipher;
@@ -2820,10 +2852,11 @@ static void ssv6xxx_update_wep_hw_security_setting(struct ssv_softc *sc, struct 
         if ((cipher == WLAN_CIPHER_SUITE_WEP40) || (cipher == WLAN_CIPHER_SUITE_WEP104)) {
             if (vif_priv->wep_cipher != cipher) {
                 printk("Write WEP wlan cipher: 0x%x to HW\n", cipher);
+                down_read(&sc->sta_info_sem);
                 list_for_each_entry(sta_priv_iter, &vif_priv->sta_list, list)
                 {
-                    if ((sta_priv_iter->sta_info->s_flags & STA_FLAG_VALID) == 1) {
-                        wsid = sta_priv_iter->sta_info->hw_wsid;
+                    if ((sc->sta_info[sta_priv_iter->sta_idx].s_flags & STA_FLAG_VALID) == 1) {
+                        wsid = sc->sta_info[sta_priv_iter->sta_idx].hw_wsid;
                         if (wsid >= 0) {
                             switch (cipher) {
                                 case WLAN_CIPHER_SUITE_WEP40:
@@ -2844,22 +2877,25 @@ static void ssv6xxx_update_wep_hw_security_setting(struct ssv_softc *sc, struct 
                         }
                     }
                 }
+                up_read(&sc->sta_info_sem);
             }
             if (vif_priv->wep_idx != keyidx) {
                 printk("Update WEP default key index for HW encryption\n");
                 printk("Write WEP key index: %d to HW\n", keyidx);
                 vif_priv->wep_idx = keyidx;
+                down_read(&sc->sta_info_sem);
                 list_for_each_entry(sta_priv_iter, &vif_priv->sta_list, list)
                 {
-                    if ((sta_priv_iter->sta_info->s_flags & STA_FLAG_VALID) == 1) {
+                    if ((sc->sta_info[sta_priv_iter->sta_idx].s_flags & STA_FLAG_VALID) == 1) {
          HCI_WRITE_HW_CONFIG_ON(sc->sh);
-                        wsid = sta_priv_iter->sta_info->hw_wsid;
+                        wsid = sc->sta_info[sta_priv_iter->sta_idx].hw_wsid;
                         if (wsid >= 0)
                             SSV_WRITE_PAIRWISE_KEYIDX_TO_HW(sc->sh, vif_priv->wep_idx, wsid);
                         SSV_WRITE_GROUP_KEYIDX_TO_HW(sc->sh, vif_priv, vif_priv->wep_idx);
          HCI_WRITE_HW_CONFIG_OFF(sc->sh);
                     }
                 }
+                up_read(&sc->sta_info_sem);
             }
         }
     }
@@ -2870,10 +2906,10 @@ static void _ssv6xxx_tx (struct ieee80211_hw *hw, struct sk_buff *skb)
     struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
     struct ieee80211_vif *vif = info->control.vif;
     struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
+    struct ssv_vif_priv_data *vif_priv = (struct ssv_vif_priv_data *)info->control.vif->drv_priv;
 #ifdef USE_LOCAL_CRYPTO
     struct SKB_info_st *skb_info = (struct SKB_info_st *)skb->head;
     struct ieee80211_sta *sta = skb_info->sta;
-    struct ssv_vif_priv_data *vif_priv = (struct ssv_vif_priv_data *)info->control.vif->drv_priv;
     struct ssv_sta_priv_data *ssv_sta_priv = sta
                                               ? (struct ssv_sta_priv_data *)sta->drv_priv
                                              : NULL;
@@ -2962,6 +2998,8 @@ static void _ssv6xxx_tx (struct ieee80211_hw *hw, struct sk_buff *skb)
             }
         }
 tx_mpdu:
+        if(sc->ccmp_h_sel)
+            SSV_PUT_MIC_SPACE_FOR_HW_CCMP_ENCRYPT(sc, skb);
         ssv6xxx_ampdu2mpdu(hw, vif, skb);
         SSV_ADD_TXINFO(sc, skb);
         if( vif &&
@@ -2990,10 +3028,11 @@ tx_mpdu:
             struct ssv_vif_priv_data *vif_priv = (struct ssv_vif_priv_data *)vif->drv_priv;
             dev_dbg(sc->dev, "vif[%d] sc->bq4_dtim[%d]\n", vif_priv->vif_idx, sc->bq4_dtim);
         }
-        if (sc->bScanning &&
+        if ((sc->bScanning &&
             vif->p2p &&
             ieee80211_is_nullfunc(hdr->frame_control) &&
-            ieee80211_has_pm(hdr->frame_control)) {
+            ieee80211_has_pm(hdr->frame_control))
+            || (IS_MGMT_AND_BLOCK_CNTL(sc, hdr))){
             skb_pull(skb, SSV_GET_TX_DESC_SIZE(sc->sh));
             info = IEEE80211_SKB_CB(skb);
             ieee80211_tx_info_clear_status(info);
@@ -3100,8 +3139,6 @@ static void ssv6200_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *con
 #if 0
     _ssv6xxx_tx(hw, skb);
 #else
-    if(sc->ccmp_h_sel)
-        SSV_PUT_MIC_SPACE_FOR_HW_CCMP_ENCRYPT(sc, skb);
     #ifndef MULTI_THREAD_ENCRYPT
     skb_queue_tail(&sc->tx_skb_q, skb);
     #ifdef CONFIG_SSV6XXX_DEBUGFS
@@ -3424,14 +3461,11 @@ int ssv6xxx_tx_task (void *data)
 {
     struct ssv_softc *sc = (struct ssv_softc *)data;
     u32 wait_period = SSV_AMPDU_timer_period / 2;
-    unsigned int rt_prio = (ssv_tx_task_prio > 99)?99:((ssv_tx_task_prio < 1)?1:ssv_tx_task_prio);
-    struct sched_param param = { .sched_priority = rt_prio };
-    sched_setscheduler(current, SCHED_RR, &param);
+    txrxboost_init();
     printk("SSV6XXX TX Task started.\n");
     while (!kthread_should_stop())
     {
         u32 before_timeout = (-1);
-  set_current_state(TASK_INTERRUPTIBLE);
         before_timeout = wait_event_interruptible_timeout(sc->tx_wait_q,
                                                           ( skb_queue_len(&sc->tx_skb_q)
                                                            || kthread_should_stop()
@@ -3442,7 +3476,10 @@ int ssv6xxx_tx_task (void *data)
             printk("Quit TX task loop...\n");
             break;
         }
-  set_current_state(TASK_RUNNING);
+        txrxboost_change((u32)atomic_read(&sc->ampdu_tx_frame),
+   sc->sh->cfg.txrxboost_low_threshold,
+   sc->sh->cfg.txrxboost_high_threshold,
+   sc->sh->cfg.txrxboost_prio);
         do {
             struct sk_buff *tx_skb = skb_dequeue(&sc->tx_skb_q);
             if (tx_skb == NULL)
@@ -3498,13 +3535,11 @@ int ssv6xxx_rx_task (void *data)
     unsigned long wait_period = msecs_to_jiffies(200);
     unsigned long last_timeout_check_jiffies = jiffies;
     unsigned long cur_jiffies;
+    txrxboost_init();
     printk("SSV6XXX RX Task started.\n");
-    sc->remove_sta_in_process = false;
-    sc->rxq_in_process = false;
     while (!kthread_should_stop())
     {
         u32 before_timeout = (-1);
-        set_current_state(TASK_INTERRUPTIBLE);
         before_timeout = wait_event_interruptible_timeout(sc->rx_wait_q,
                                                           ( skb_queue_len(&sc->rx_skb_q)
                                                            || skb_queue_len(&sc->tx_done_q)
@@ -3515,7 +3550,10 @@ int ssv6xxx_rx_task (void *data)
             printk("Quit RX task loop...\n");
             break;
         }
-        set_current_state(TASK_RUNNING);
+        txrxboost_change((u32)atomic_read(&sc->ampdu_tx_frame),
+   sc->sh->cfg.txrxboost_low_threshold,
+   sc->sh->cfg.txrxboost_high_threshold,
+   sc->sh->cfg.txrxboost_prio);
         cur_jiffies = jiffies;
         if ( (before_timeout == 0)
             || time_before((last_timeout_check_jiffies + wait_period), cur_jiffies))
@@ -3525,11 +3563,9 @@ int ssv6xxx_rx_task (void *data)
             ssv6xxx_ampdu_check_timeout(sc->hw);
             last_timeout_check_jiffies = cur_jiffies;
         }
-        if ((skb_queue_len(&sc->rx_skb_q)) && (sc->remove_sta_in_process == false)){
-            sc->rxq_in_process = true;
+        if (skb_queue_len(&sc->rx_skb_q)){
             sc->rx_stuck_idle_time = 0;
             _process_rx_q(sc, &sc->rx_skb_q, NULL);
-            sc->rxq_in_process = false;
         }
         if (skb_queue_len(&sc->tx_done_q))
             _process_tx_done(sc);
@@ -3540,18 +3576,38 @@ void ssv6xxx_house_keeping(unsigned long argv)
 {
     struct ssv_softc *sc = (struct ssv_softc *)argv;
     if (!sc->mac80211_dev_started ||
-        (sc->sc_flags & SC_OP_HW_RESET))
+        (sc->sc_flags & SC_OP_HW_RESET) ||
+        (sc->sc_flags & SC_OP_BLOCK_CNTL))
         return;
     if (sc->sh->cfg.online_reset & ONLINE_RESET_ENABLE)
         queue_work(sc->house_keeping_wq, &sc->rx_stuck_work);
     queue_work(sc->house_keeping_wq, &sc->mib_edca_work);
     if (sc->sh->cfg.tx_stuck_detect)
        queue_work(sc->house_keeping_wq, &sc->tx_poll_work);
-    if ((sc->cci_start) && (sc->sh->cfg.cci & CCI_SMART)) {
-        sc->cci_counter ++;
-        if (sc->cci_counter == HOUSE_KEEPING_1_SEC){
-            queue_work(sc->house_keeping_wq, &sc->cci_clean_work);
-            sc->cci_counter = 0;
+#ifdef CONFIG_SSV_CCI_IMPROVEMENT
+    if ((sc->sh->cfg.cci & CCI_CTL) && (sc->bScanning == false)){
+        if (sc->cci_modified) {
+            queue_work(sc->house_keeping_wq, &sc->cci_set_work);
+        }
+        if ((sc->cci_start) && (sc->sh->cfg.cci & CCI_SMART)) {
+            sc->cci_rx_unavailable_counter ++;
+            if (sc->sh->cfg.cci & CCI_DBG)
+                printk("cci rx not available count %d\n", sc->cci_rx_unavailable_counter);
+            if (sc->cci_rx_unavailable_counter >= 2){
+                queue_work(sc->house_keeping_wq, &sc->cci_clean_work);
+                sc->cci_rx_unavailable_counter = 0;
+            }
+        }
+    }
+#endif
+    if ((sc->gt_enabled) && (sc->bScanning == false)){
+       queue_work(sc->house_keeping_wq, &sc->set_txpwr_work);
+    }
+    if (sc->thermal_monitor) {
+        sc->thermal_monitor_counter ++;
+        if (sc->thermal_monitor_counter == HOUSE_KEEPING_10_SEC){
+            queue_work(sc->house_keeping_wq, &sc->thermal_monitor_work);
+            sc->thermal_monitor_counter = 0;
         }
     }
     mod_timer(&sc->house_keeping, jiffies + msecs_to_jiffies(HOUSE_KEEPING_TIMEOUT));
@@ -3566,11 +3622,11 @@ int ssv6xxx_set_promisc(struct ssv_softc *sc, int accept)
 {
     u32 val=0;
     if (accept)
-        val = 0x2;
+        val = MRX_MODE_PROMISCUOUS;
     else
-        val = 0x3;
+        val = MRX_MODE_NORMAL;
 #ifdef SSV_SUPPORT_HAL
-    HAL_SET_MRX_FLT(sc->sh,val);
+    HAL_SET_MRX_MODE(sc->sh, val);
 #else
     SMAC_REG_WRITE(sc->sh, ADR_MRX_FLT_TB13, val);
 #endif
@@ -3580,11 +3636,11 @@ int ssv6xxx_get_promisc(struct ssv_softc *sc, int *paccept)
 {
     u32 val=0;
 #ifdef SSV_SUPPORT_HAL
-    HAL_GET_MRX_FLT(sc->sh,&val);
+    HAL_GET_MRX_MODE(sc->sh, &val);
 #else
     SMAC_REG_READ(sc->sh, ADR_MRX_FLT_TB13, &val);
 #endif
-    if (val == 0x2)
+    if (val == MRX_MODE_PROMISCUOUS)
         *paccept = 1;
     else
         *paccept = 0;
@@ -3598,7 +3654,7 @@ static int ssv6200_start(struct ieee80211_hw *hw)
     struct ieee80211_channel *chan;
     enum nl80211_channel_type channel_type;
     mutex_lock(&sc->mutex);
-    if (ssv6xxx_init_mac(sc->sh) != 0) {
+    if (tu_ssv6xxx_init_mac(sc->sh) != 0) {
         printk("Initialize ssv6200 mac fail!!\n");
         mutex_unlock(&sc->mutex);
         return -1;
@@ -3635,12 +3691,6 @@ static int ssv6200_start(struct ieee80211_hw *hw)
     ieee80211_wake_queues(hw);
     ssv6200_ampdu_init(hw);
     SSV_SET_RF_ENABLE(sh);
-#ifdef CONFIG_SSV_SMARTLINK
-            {
-                extern int ksmartlink_init(void);
-                (void)ksmartlink_init();
-            }
-#endif
     sc->mac80211_dev_started = true;
     SSV_SEND_TX_POLL_CMD(sc->sh, SSV6XXX_TX_POLL_START);
     sc->house_keeping.expires = jiffies + msecs_to_jiffies(HOUSE_KEEPING_TIMEOUT);
@@ -3682,12 +3732,6 @@ static void ssv6200_stop(struct ieee80211_hw *hw)
         SSV_SET_RF_ENABLE(sc->sh);
     }
     mutex_unlock(&sc->mutex);
-#ifdef CONFIG_SSV_SMARTLINK
-        {
-            extern void ksmartlink_exit(void);
-            ksmartlink_exit();
-        }
-#endif
     printk("%s(): leave\n", __FUNCTION__);
 }
 struct ssv_vif_priv_data * ssv6xxx_config_vif_res(struct ssv_softc *sc,
@@ -3728,16 +3772,49 @@ struct ssv_vif_priv_data * ssv6xxx_config_vif_res(struct ssv_softc *sc,
     priv_vif->force_sw_encrypt = (vif->type == NL80211_IFTYPE_AP);
     priv_vif->wep_idx = -1;
     #ifdef USE_LOCAL_CRYPTO
-    priv_vif->crypto_data.ops = NULL;
-    priv_vif->crypto_data.priv = NULL;
-    #ifdef HAS_CRYPTO_LOCK
-    rwlock_init(&priv_vif->crypto_data.lock);
-    #endif
+    if (SSV_NEED_SW_CIPHER(sc->sh)) {
+        priv_vif->crypto_data.ops = NULL;
+        priv_vif->crypto_data.priv = NULL;
+        #ifdef HAS_CRYPTO_LOCK
+        rwlock_init(&priv_vif->crypto_data.lock);
+        #endif
+    }
     #endif
     vif_info = &sc->vif_info[priv_vif->vif_idx];
     vif_info->if_type = vif->type;
     vif_info->vif = vif;
     return priv_vif;
+}
+static void _if_set_apmode(struct ieee80211_hw *hw,
+    struct ieee80211_vif *vif)
+{
+    struct ssv_softc *sc=hw->priv;
+    struct ieee80211_channel *chan;
+    struct ssv_vif_priv_data *vif_priv = (struct ssv_vif_priv_data *)vif->drv_priv;
+    SSV_SET_BSSID(sc->sh, sc->sh->cfg.maddr[vif_priv->vif_idx], vif_priv->vif_idx);
+    SSV_SET_OP_MODE(sc->sh, SSV6XXX_OPMODE_AP, vif_priv->vif_idx);
+    BUG_ON(sc->ap_vif != NULL);
+    sc->ap_vif = vif;
+    #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
+    chan = hw->conf.channel;
+    #else
+    chan = hw->conf.chandef.chan;
+    #endif
+    printk("AP created at ch %d \n", chan->hw_value);
+    if ( !vif->p2p
+        && (vif_priv->vif_idx == 0))
+    {
+        printk("Normal AP mode. Config Q4 to DTIM Q.\n");
+        SSV_HALT_MNGQ_UNTIL_DTIM(sc->sh);
+        sc->bq4_dtim = true;
+    }
+#ifdef CONFIG_SSV_SUPPORT_ANDROID
+   if(vif->p2p == 0)
+   {
+       printk(KERN_INFO "AP mode init wifi_alive_lock\n");
+       ssv_wake_lock(sc);
+   }
+#endif
 }
 static int ssv6200_add_interface(struct ieee80211_hw *hw,
                                  struct ieee80211_vif *vif)
@@ -3758,38 +3835,8 @@ static int ssv6200_add_interface(struct ieee80211_hw *hw,
     mutex_lock(&sc->mutex);
     vif_priv = ssv6xxx_config_vif_res(sc, vif);
     SSV_SET_MACADDR(sc->sh, vif_priv->vif_idx);
-    if ((vif->p2p == 0) && (vif->type == NL80211_IFTYPE_AP))
-    {
-        printk("VIF[%d] set bssid and config opmode to ap\n", vif_priv->vif_idx);
-        SSV_SET_BSSID(sc->sh, sc->sh->cfg.maddr[vif_priv->vif_idx], vif_priv->vif_idx);
-        SSV_SET_OP_MODE(sc->sh, SSV6XXX_OPMODE_AP, vif_priv->vif_idx);
-    }
-    if (vif->type == NL80211_IFTYPE_AP)
-    {
-        struct ieee80211_channel *chan;
-        BUG_ON(sc->ap_vif != NULL);
-        sc->ap_vif = vif;
-        #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
-        chan = hw->conf.channel;
-        #else
-        chan = hw->conf.chandef.chan;
-        #endif
-        printk("AP created at ch %d \n", chan->hw_value);
-        if ( !vif->p2p
-            && (vif_priv->vif_idx == 0))
-        {
-            printk("Normal AP mode. Config Q4 to DTIM Q.\n");
-            SSV_HALT_MNGQ_UNTIL_DTIM(sc->sh);
-            sc->bq4_dtim = true;
-        }
-#ifdef CONFIG_SSV_SUPPORT_ANDROID
-        if(vif->p2p == 0)
-        {
-            printk(KERN_INFO "AP mode init wifi_alive_lock\n");
-            ssv_wake_lock(sc);
-        }
-#endif
-    }
+    if ((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO))
+        _if_set_apmode(hw, vif);
     sc->nvif++;
     dev_err(sc->dev, "VIF %02x:%02x:%02x:%02x:%02x:%02x of type %d is added.\n",
              vif->addr[0], vif->addr[1], vif->addr[2],
@@ -3814,11 +3861,15 @@ static int ssv6200_change_interface(struct ieee80211_hw *hw,
     sc->vif_info[vif_idx].if_type = new_type;
     sc->force_disable_directly_ack_tx = p2p;
     vif->type = new_type;
-    vif->p2p = p2p;
     if ((vif->type == NL80211_IFTYPE_AP) || (vif->type == NL80211_IFTYPE_P2P_GO))
-        sc->ap_vif = vif;
-    else
+        _if_set_apmode(hw, vif);
+    else {
+        u8 null_addr[6]={0, 0, 0, 0, 0, 0};
         sc->ap_vif = NULL;
+        SSV_SET_BSSID(sc->sh, null_addr, vif_priv->vif_idx);
+        SSV_SET_OP_MODE(sc->sh, SSV6XXX_OPMODE_STA, vif_priv->vif_idx);
+    }
+    vif->p2p = p2p;
     mutex_unlock(&sc->mutex);
     return 0;
 }
@@ -3827,9 +3878,6 @@ static void ssv6200_remove_interface(struct ieee80211_hw *hw,
 {
     struct ssv_softc *sc = hw->priv;
     struct ssv_vif_priv_data *vif_priv = (struct ssv_vif_priv_data *)vif->drv_priv;
-    #ifdef USE_LOCAL_CRYPTO
-    INIT_WRITE_CRYPTO_DATA(crypto_data, &vif_priv->crypto_data);
-    #endif
     dev_err(sc->dev,
              "Removing interface %02x:%02x:%02x:%02x:%02x:%02x. PS=%d\n",
              vif->addr[0], vif->addr[1], vif->addr[2],
@@ -3837,14 +3885,17 @@ static void ssv6200_remove_interface(struct ieee80211_hw *hw,
     HCI_WRITE_HW_CONFIG_ON(sc->sh);
     mutex_lock(&sc->mutex);
     #ifdef USE_LOCAL_CRYPTO
-    START_WRITE_CRYPTO_DATA(crypto_data);
-    if (crypto_data->ops && crypto_data->priv)
-    {
-        crypto_data->ops->deinit(crypto_data->priv);
+    if (SSV_NEED_SW_CIPHER(sc->sh)){
+        INIT_WRITE_CRYPTO_DATA(crypto_data, &vif_priv->crypto_data);
+        START_WRITE_CRYPTO_DATA(crypto_data);
+        if (crypto_data->ops && crypto_data->priv)
+        {
+            crypto_data->ops->deinit(crypto_data->priv);
+        }
+        crypto_data->ops = NULL;
+        crypto_data->priv = NULL;
+        END_WRITE_CRYPTO_DATA(crypto_data);
     }
-    crypto_data->ops = NULL;
-    crypto_data->priv = NULL;
-    END_WRITE_CRYPTO_DATA(crypto_data);
     #endif
     #ifdef CONFIG_SSV6XXX_DEBUGFS
     ssv6xxx_debugfs_remove_interface(sc, vif);
@@ -3887,21 +3938,19 @@ void ssv6xxx_disable_ps(struct ssv_softc *sc)
 static bool ssv6200_not_dual_intf_on_line(struct ssv_softc *sc)
 {
     struct ieee80211_vif *vif;
-    int i = 0, assoc = 0;
+    int i = 0, assoc = 0, p2p = 0;
     for (i = 0; i < SSV6200_MAX_VIF; i++) {
         if (sc->vif_info[i].vif != NULL) {
             vif = sc->vif_info[i].vif;
-            if (vif->type == NL80211_IFTYPE_P2P_GO) {
-                if (!list_empty(&((struct ssv_vif_priv_data *)vif->drv_priv)->sta_list))
-                    return false;
-            }
             if ((vif->type == NL80211_IFTYPE_STATION) || (vif->type == NL80211_IFTYPE_P2P_CLIENT)) {
                 if (vif->bss_conf.assoc)
                     assoc++;
+                if (vif->p2p)
+                    p2p++;
             }
         }
     }
-    if ((sc->nvif == SSV6200_MAX_VIF) && (assoc > 0))
+    if ((p2p > 0) || (assoc == 2))
         return false;
     return true;
 }
@@ -3912,10 +3961,6 @@ int ssvxxx_get_sta_assco_cnt(struct ssv_softc *sc)
     for (i = 0; i < SSV6200_MAX_VIF; i++) {
         if (sc->vif_info[i].vif != NULL) {
             vif = sc->vif_info[i].vif;
-            if (vif->type == NL80211_IFTYPE_P2P_GO) {
-                if (!list_empty(&((struct ssv_vif_priv_data *)vif->drv_priv)->sta_list))
-                    return 0;
-            }
             if ((vif->type == NL80211_IFTYPE_STATION) || (vif->type == NL80211_IFTYPE_P2P_CLIENT)) {
                 if (vif->bss_conf.assoc)
                     assoc++;
@@ -3953,7 +3998,8 @@ static int ssv6200_config(struct ieee80211_hw *hw, u32 changed)
     if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
         struct ieee80211_channel *chan;
         enum nl80211_channel_type channel_type;
-        if (sc->sc_flags & SC_OP_HW_RESET)
+        if ((sc->sc_flags & SC_OP_HW_RESET) ||
+            (sc->sc_flags & SC_OP_CHAN_FIXED))
             goto out;
         #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
         chan = hw->conf.channel;
@@ -3989,13 +4035,20 @@ static int ssv6200_config(struct ieee80211_hw *hw, u32 changed)
 #endif
         if (hw->conf.flags & IEEE80211_CONF_OFFCHANNEL)
         {
-            if ( (sc->ap_vif == NULL)
-                && ssv6200_not_dual_intf_on_line(sc)
-                && ((sc->hw_chan != chan->hw_value) || (sc->hw_chan_type != channel_type)))
+            if ( (IS_ALLOW_SCAN || IS_NON_AP_MODE || IS_NONE_STA_CONNECTED_IN_AP_MODE)
+                 && ssv6200_not_dual_intf_on_line(sc)
+                 && ((sc->hw_chan != chan->hw_value) || (sc->hw_chan_type != channel_type)) )
             {
+                int i = 1;
                 sc->sc_flags |= SC_OP_OFFCHAN;
-                mdelay(1);
                 HCI_PAUSE(sc->sh, (TXQ_EDCA_0|TXQ_EDCA_1|TXQ_EDCA_2|TXQ_EDCA_3| TXQ_MGMT));
+                sc->rx_data_exist = false;
+                mdelay(1);
+                while ((sc->rx_data_exist == true) && (i < 200)){
+                    i++;
+                    sc->rx_data_exist = false;
+                    mdelay(1);
+                }
                 HAL_SET_CHANNEL(sc, chan, channel_type);
                 sc->hw_chan = chan->hw_value;
                 sc->hw_chan_type = channel_type;
@@ -4003,14 +4056,14 @@ static int ssv6200_config(struct ieee80211_hw *hw, u32 changed)
             }
             else
             {
-                dev_dbg(sc->dev, "Off-channel to %d is ignored when AP mode enabled.\n", chan->hw_value);
+                dev_dbg(sc->dev, "Off-channel to %d is ignored\n", chan->hw_value);
             }
         }
         else {
-            if ( (sc->cur_channel == NULL)
+            if ( ((sc->cur_channel == NULL)
                 || (sc->sc_flags & SC_OP_OFFCHAN)
                 || (sc->hw_chan != chan->hw_value)
-                || (sc->hw_chan_type != channel_type))
+                || (sc->hw_chan_type != channel_type)) )
             {
                 HCI_PAUSE(sc->sh, (TXQ_EDCA_0|TXQ_EDCA_1|TXQ_EDCA_2|TXQ_EDCA_3| TXQ_MGMT));
                 HAL_SET_CHANNEL(sc, chan, channel_type);
@@ -4233,6 +4286,7 @@ static int ssv6200_sta_add(struct ieee80211_hw *hw,
 #endif
  printk("[I] %s(): vif[%d] ", __FUNCTION__, vif_priv->vif_idx);
     HCI_WRITE_HW_CONFIG_ON(sc->sh);
+    mutex_lock(&sc->mutex);
     if (sc->force_triger_reset == true)
     {
         vif_priv->sta_asleep_mask = 0;
@@ -4302,11 +4356,13 @@ static int ssv6200_sta_add(struct ieee80211_hw *hw,
                 sta_priv_dat->need_sw_encrypt = false;
                 sta_priv_dat->use_mac80211_decrypt = false;
                 #ifdef USE_LOCAL_CRYPTO
-                sta_priv_dat->crypto_data.ops = NULL;
-                sta_priv_dat->crypto_data.priv = NULL;
-                #ifdef HAS_CRYPTO_LOCK
-                rwlock_init(&sta_priv_dat->crypto_data.lock);
-                #endif
+                if (SSV_NEED_SW_CIPHER(sc->sh)){
+                    sta_priv_dat->crypto_data.ops = NULL;
+                    sta_priv_dat->crypto_data.priv = NULL;
+                    #ifdef HAS_CRYPTO_LOCK
+                    rwlock_init(&sta_priv_dat->crypto_data.lock);
+                    #endif
+                }
                 #endif
                 if ( (vif_priv->pair_cipher == SSV_CIPHER_WEP40)
                     || (vif_priv->pair_cipher == SSV_CIPHER_WEP104))
@@ -4335,9 +4391,9 @@ static int ssv6200_sta_add(struct ieee80211_hw *hw,
             ret = -1;
             break;
         }
-        #ifdef CONFIG_SSV6XXX_DEBUGFS
+#ifdef CONFIG_SSV6XXX_DEBUGFS
         ssv6xxx_debugfs_add_sta(sc, sta_info);
-        #endif
+#endif
         if ( (vif_priv->pair_cipher == SSV_CIPHER_WEP40)
             || (vif_priv->pair_cipher == SSV_CIPHER_WEP104))
         {
@@ -4364,9 +4420,9 @@ static int ssv6200_sta_add(struct ieee80211_hw *hw,
         }
 #endif
         ssv6200_ampdu_tx_add_sta(hw, sta);
-        #ifdef FW_WSID_WATCH_LIST
+#ifdef FW_WSID_WATCH_LIST
         SSV_ADD_FW_WSID(sc, vif_priv, sta, sta_info);
-        #endif
+#endif
         printk("Add %02x:%02x:%02x:%02x:%02x:%02x to VIF %d sw_idx=%d, wsid=%d\n",
                sta->addr[0], sta->addr[1], sta->addr[2],
                sta->addr[3], sta->addr[4], sta->addr[5],
@@ -4374,7 +4430,18 @@ static int ssv6200_sta_add(struct ieee80211_hw *hw,
                sta_priv_dat->sta_idx, sta_info->hw_wsid);
     } while (0);
 out:
+    mutex_unlock(&sc->mutex);
     HCI_WRITE_HW_CONFIG_OFF(sc->sh);
+    if ((sc->ap_vif == NULL) && (ssvxxx_get_sta_assco_cnt(sc) == 0)
+        && (sc->sh->cfg.greentx & GT_ENABLE)){
+        sc->gt_channel = sc->hw_chan;
+        sc->gt_enabled = true;
+    } else {
+        sc->dpd.pwr_mode = NORMAL_PWR;
+        sc->green_pwr = 0xff;
+        HAL_UPDATE_RF_PWR(sc);
+        sc->gt_enabled = false;
+    }
     return ret;
 }
 void ssv6200_rx_flow_check(struct ssv_sta_priv_data *sta_priv_dat,
@@ -4386,7 +4453,7 @@ void ssv6200_rx_flow_check(struct ssv_sta_priv_data *sta_priv_dat,
         struct ieee80211_sta *sta = sta_info->sta;
         struct ssv_sta_priv_data *sta_priv = (struct ssv_sta_priv_data *) sta->drv_priv;
         if ((sta_info-> s_flags == 0)
-            || ((sta_info-> s_flags && STA_FLAG_VALID) && (sta_priv->has_hw_decrypt))){
+            || ((sta_info-> s_flags & STA_FLAG_VALID) && (sta_priv->has_hw_decrypt))){
 #ifdef SSV_SUPPORT_HAL
         #ifdef CONFIG_SSV_HW_ENCRYPT_SW_DECRYPT
             HAL_SET_RX_FLOW(sc->sh, RX_DATA_FLOW, RX_HCI);
@@ -4410,14 +4477,11 @@ static int ssv6200_sta_remove(struct ieee80211_hw *hw,
 {
     struct ssv_sta_priv_data *sta_priv_dat = (struct ssv_sta_priv_data *)sta->drv_priv;
     struct ssv_softc *sc = hw->priv;
-    struct ssv_sta_info *sta_info = sta_priv_dat->sta_info;
+    struct ssv_sta_info *sta_info = &sc->sta_info[sta_priv_dat->sta_idx];
     unsigned long flags;
     u32 bit;
     struct ssv_vif_priv_data *priv_vif = (struct ssv_vif_priv_data *)vif->drv_priv;
     u8 hw_wsid = -1;
-    #ifdef USE_LOCAL_CRYPTO
-    INIT_WRITE_CRYPTO_DATA(crypto_data, &sta_priv_dat->crypto_data);
-    #endif
     BUG_ON(sta_priv_dat->sta_idx >= SSV_NUM_STA);
 #ifdef CONFIG_SSV_CCI_IMPROVEMENT
     #define RX_11B_CCA_IN_SCAN 0x20300080
@@ -4435,39 +4499,39 @@ static int ssv6200_sta_remove(struct ieee80211_hw *hw,
 #endif
 #endif
     HCI_WRITE_HW_CONFIG_ON(sc->sh);
-    if (sc->rxq_in_process){
-        sc->remove_sta_in_process = true;
-        printk("Wait a while before removing sta \n");
-        while (sc->rxq_in_process)
-            msleep(1);
-    }
     dev_notice(sc->dev,
                "Removing STA %d (%02X:%02X:%02X:%02X:%02X:%02X) from VIF %d\n.",
                sta_priv_dat->sta_idx, sta->addr[0], sta->addr[1], sta->addr[2],
                sta->addr[3], sta->addr[4], sta->addr[5], priv_vif->vif_idx);
-    spin_lock_irqsave(&sc->ps_state_lock, flags);
+#if defined(IRQ_PROC_RX_DATA)
+    local_bh_disable();
+#endif
+    mutex_lock(&sc->mutex);
+    down_write(&sc->sta_info_sem);
     ssv6200_rx_flow_check(sta_priv_dat, sc);
+    spin_lock_irqsave(&sc->ps_state_lock, flags);
     #ifdef CONFIG_SSV6XXX_DEBUGFS
     #endif
     #ifdef USE_LOCAL_CRYPTO
-    START_WRITE_CRYPTO_DATA(crypto_data);
-    if (crypto_data->ops)
-    {
-        if ( (priv_vif->crypto_data.ops != crypto_data->ops)
-            && crypto_data->priv)
-        {
-            crypto_data->ops->deinit(crypto_data->priv);
-            dev_info(sc->dev, "STA releases crypto OK!\n");
-        }
-        crypto_data->priv = NULL;
-        crypto_data->ops = NULL;
-    }
-    END_WRITE_CRYPTO_DATA(crypto_data);
-    #ifdef MULTI_THREAD_ENCRYPT
     if (SSV_NEED_SW_CIPHER(sc->sh)){
+        INIT_WRITE_CRYPTO_DATA(crypto_data, &sta_priv_dat->crypto_data);
+        START_WRITE_CRYPTO_DATA(crypto_data);
+        if (crypto_data->ops)
+        {
+            if ( (priv_vif->crypto_data.ops != crypto_data->ops)
+                && crypto_data->priv)
+            {
+                crypto_data->ops->deinit(crypto_data->priv);
+                dev_info(sc->dev, "STA releases crypto OK!\n");
+            }
+            crypto_data->priv = NULL;
+            crypto_data->ops = NULL;
+        }
+        END_WRITE_CRYPTO_DATA(crypto_data);
+    #ifdef MULTI_THREAD_ENCRYPT
         _clean_up_crypto_skb(sc, sta);
-    }
     #endif
+    }
     #endif
 #if 0
     if ((sc->ps_status == PWRSV_PREPARE)||(sc->ps_status == PWRSV_ENABLE)) {
@@ -4510,7 +4574,9 @@ static int ssv6200_sta_remove(struct ieee80211_hw *hw,
 #endif
     #ifdef CONFIG_SSV6XXX_DEBUGFS
     {
-    ssv6xxx_debugfs_remove_sta(sc, sta_info);
+        spin_unlock_irqrestore(&sc->ps_state_lock, flags);
+        ssv6xxx_debugfs_remove_sta(sc, sta_info);
+        spin_lock_irqsave(&sc->ps_state_lock, flags);
     }
     #endif
     memset(sta_info, 0, sizeof(*sta_info));
@@ -4534,8 +4600,19 @@ static int ssv6200_sta_remove(struct ieee80211_hw *hw,
     }
 #endif
     SSV_DEL_HW_WSID(sc, hw_wsid);
-    sc->remove_sta_in_process = false;
+    printk("hw wsid %u is removed.\n", hw_wsid);
+    up_write(&sc->sta_info_sem);
+    mutex_unlock(&sc->mutex);
+#if defined(IRQ_PROC_RX_DATA)
+    local_bh_enable();
+#endif
     HCI_WRITE_HW_CONFIG_OFF(sc->sh);
+    if (sc->gt_enabled){
+        sc->dpd.pwr_mode = NORMAL_PWR;
+        sc->green_pwr = 0xff;
+        HAL_UPDATE_RF_PWR(sc);
+        sc->gt_enabled = false;
+    }
     return 0;
 }
 static void ssv6200_sta_notify(struct ieee80211_hw *hw,
@@ -4546,21 +4623,18 @@ static void ssv6200_sta_notify(struct ieee80211_hw *hw,
     struct ssv_softc *sc = hw->priv;
     struct ssv_vif_priv_data *priv_vif = (struct ssv_vif_priv_data *)vif->drv_priv;
     struct ssv_sta_priv_data *sta_priv_dat = (struct ssv_sta_priv_data *)sta->drv_priv;
-    struct ssv_sta_info *sta_info;
     u32 bit, prev;
     unsigned long flags;
 #ifdef BROADCAST_DEBUG
 #endif
     spin_lock_irqsave(&sc->ps_state_lock, flags);
     bit = BIT(sta_priv_dat->sta_idx);
- prev = priv_vif->sta_asleep_mask & bit;
- sta_info = sta_priv_dat->sta_info;
+    prev = priv_vif->sta_asleep_mask & bit;
     switch (cmd)
     {
         case STA_NOTIFY_SLEEP:
             if(!prev)
             {
-                sta_info->sleeping = true;
                 if ( (vif->type == NL80211_IFTYPE_AP)
                     && sc->bq4_dtim
                     && !priv_vif->sta_asleep_mask
@@ -4574,7 +4648,6 @@ static void ssv6200_sta_notify(struct ieee80211_hw *hw,
         case STA_NOTIFY_AWAKE:
             if(prev)
             {
-                sta_info->sleeping = false;
     priv_vif->sta_asleep_mask &= ~bit;
             }
             break;
@@ -4582,6 +4655,7 @@ static void ssv6200_sta_notify(struct ieee80211_hw *hw,
             break;
     }
     spin_unlock_irqrestore(&sc->ps_state_lock, flags);
+    return;
 }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,2,0)
 static u64 ssv6200_get_tsf(struct ieee80211_hw *hw)
@@ -4656,17 +4730,23 @@ static int ssv6200_set_tim(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
                             bool set)
 {
     struct ssv_softc *sc = hw->priv;
-    struct ssv_sta_info *sta_info = sta
-                                    ? ((struct ssv_sta_priv_data *)sta->drv_priv)->sta_info
-                                    : NULL;
+    struct ssv_sta_info *sta_info = NULL;
+    if (sta) {
+        sta_info = &sc->sta_info[((struct ssv_sta_priv_data *)sta->drv_priv)->sta_idx];
+        if ((sta_info->s_flags & STA_FLAG_VALID) == 0) {
+            printk("%s(): sta_info is gone.\n", __func__);
+            goto out;
+        }
+    }
     if (sta_info && (sta_info->tim_set^set))
     {
 #ifdef BROADCAST_DEBUG
-           printk("[I] [A] ssvcabrio_set_tim");
+           printk("[I] [A] ssv6200_set_tim");
 #endif
         sta_info->tim_set = set;
         queue_work(sc->config_wq, &sc->set_tim_work);
     }
+out:
     return 0;
 }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,2,0)
@@ -4694,7 +4774,7 @@ static int ssv6200_conf_tx(struct ieee80211_hw *hw,
         goto out;
     }
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
-    if (priv_vif->vif_idx != 0) {
+    if ((priv_vif->vif_idx != 0) && (vif->p2p == 0) ) {
         dev_warn(sc->dev, "WMM setting applicable to primary interface only.\n");
         ret = 1;
         goto out;
@@ -4809,6 +4889,11 @@ static int ssv6200_ampdu_action(struct ieee80211_hw *hw,
         ampdu_db_log("Disable AMPDU_TX(2).\n");
         return -EOPNOTSUPP;
     }
+    mutex_lock(&sc->mutex);
+    if ((sc->sta_info[((struct ssv_sta_priv_data *)sta->drv_priv)->sta_idx].s_flags & STA_FLAG_VALID) == 0) {
+        printk(KERN_WARNING "%s(): sta_info is gone.\n", __func__);
+        return -ENODATA;
+    }
     switch (action)
     {
         case IEEE80211_AMPDU_RX_START:
@@ -4821,7 +4906,7 @@ static int ssv6200_ampdu_action(struct ieee80211_hw *hw,
             if (!find_peer)
                 break;
             sta_priv = (struct ssv_sta_priv_data *)sta->drv_priv;
-            sta_info = (struct ssv_sta_info *)sta_priv->sta_info;
+            sta_info = &sc->sta_info[sta_priv->sta_idx];
             sta_info->s_flags &= ~(STA_FLAG_AMPDU_RX);
             sc->rx_ba_session_count--;
             if (sc->rx_ba_session_count <= 0) {
@@ -4834,6 +4919,8 @@ static int ssv6200_ampdu_action(struct ieee80211_hw *hw,
             printk(KERN_ERR "AMPDU_TX_START %02X:%02X:%02X:%02X:%02X:%02X %d.\n",
                    sta->addr[0], sta->addr[1], sta->addr[2], sta->addr[3],
                    sta->addr[4], sta->addr[5], tid);
+            sta_priv = (struct ssv_sta_priv_data *)sta->drv_priv;
+            sta_priv->max_ampdu_size = SSV_AMPDU_SIZE_1_2(sc->sh);
             ssv6200_ampdu_tx_start(tid, sta, hw, ssn);
             ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
             break;
@@ -4860,6 +4947,7 @@ static int ssv6200_ampdu_action(struct ieee80211_hw *hw,
             ret = -EOPNOTSUPP;
             break;
     }
+    mutex_unlock(&sc->mutex);
     return ret;
 }
 #ifdef CONFIG_PM
@@ -5197,24 +5285,38 @@ struct ssv_crypto_data *ssv6xxx_skb_get_rx_cryptops(struct ssv_softc *sc, struct
         return NULL;
     }
     sta_priv = (struct ssv_sta_priv_data *)sta->drv_priv;
-    vif_priv = (struct ssv_vif_priv_data *)sta_priv->sta_info->vif->drv_priv;
+#ifndef IRQ_PROC_RX_DATA
+    down_read(&sc->sta_info_sem);
+#else
+    while(!down_read_trylock(&sc->sta_info_sem));
+#endif
+    if ((sc->sta_info[sta_priv->sta_idx].s_flags & STA_FLAG_VALID) == 0) {
+        up_read(&sc->sta_info_sem);
+        printk("%s(): sta_info is gone.\n", __func__);
+        return NULL;
+    }
+    vif_priv = (struct ssv_vif_priv_data *)sc->sta_info[sta_priv->sta_idx].vif->drv_priv;
     vif_info = &sc->vif_info[vif_priv->vif_idx];
     if (vif_info->if_type == NL80211_IFTYPE_STATION)
         unicast = (is_multicast_ether_addr(hdr->addr1))?0:1;
     if((sta->drv_priv != NULL) && (vif_info->if_type == NL80211_IFTYPE_AP))
     {
+        up_read(&sc->sta_info_sem);
         return &sta_priv->crypto_data;
     }
     else if((sta->drv_priv != NULL) && (unicast == 1))
     {
+        up_read(&sc->sta_info_sem);
         return &sta_priv->crypto_data;
     }
     else if((unicast != 1) && (vif_priv != NULL))
     {
+        up_read(&sc->sta_info_sem);
         return &vif_priv->crypto_data;
     }
     else
     {
+        up_read(&sc->sta_info_sem);
         printk("[Local Crypto]: No useful drv_priv, sta = %p, unicast = %d, vif_priv = %p", sta, unicast, vif_priv);
         if(sta != NULL)
             printk(", sta_priv = %p", sta->drv_priv);
@@ -5295,17 +5397,30 @@ void mitigate_cci(struct ssv_softc *sc, struct ssv_sta_priv_data *sta_priv, u32 
             printk("mitigate_cci input error[%d]!!\n",input_level);
             return;
         }
+#ifndef IRQ_PROC_RX_DATA
+        down_read(&sc->sta_info_sem);
+#else
+        while(!down_read_trylock(&sc->sta_info_sem));
+#endif
+        if ((sta_priv->sta_info->s_flags & STA_FLAG_VALID) == 0) {
+            up_read(&sc->sta_info_sem);
+            printk("%s(): sta_info is gone.\n", __func__);
+            return;
+        }
         sc->cci_last_jiffies = jiffies;
         vif = sta_priv->sta_info->vif;
         vif_priv = (struct ssv_vif_priv_data *)vif->drv_priv;
         if (vif_priv->vif_idx){
+            up_read(&sc->sta_info_sem);
             printk("Interface skip CCI[%d]!!\n",vif_priv->vif_idx);
             return;
         }
         if (vif->p2p == true) {
+            up_read(&sc->sta_info_sem);
             printk("Interface skip CCI by P2P!!\n");
             return;
         }
+        up_read(&sc->sta_info_sem);
         if (sc->cci_current_level == 0) {
             sc->cci_current_level = MAX_CCI_LEVEL;
             sc->cci_current_gate = (sizeof(adjust_cci)/sizeof(adjust_cci[0])) - 1;
@@ -5364,6 +5479,20 @@ void mitigate_cci(struct ssv_softc *sc, struct ssv_sta_priv_data *sta_priv, u32 
 }
 #endif
 #endif
+
+static u64 ssv6200_get_systime_us(void)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39))
+	struct timespec ts;
+	get_monotonic_boottime(&ts);
+	return ((u64)ts.tv_sec * 1000000) + ts.tv_nsec / 1000;
+#else
+	struct timeval tv;
+	do_gettimeofday(&tv);
+	return ((u64)tv.tv_sec * 1000000) + tv.tv_usec;
+#endif
+}
+
 static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
 {
     struct ieee80211_rx_status *rxs;
@@ -5385,14 +5514,8 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
     SKB_info *skb_info = NULL;
     u32 wsid, rate_idx, mng_used;
     bool aggr;
-#ifdef USE_LOCAL_CRYPTO
-    int ret = 0;
-#ifdef MULTI_THREAD_ENCRYPT
-    struct ssv_encrypt_task_list *ta = NULL;
-    unsigned long flags;
-#endif
-#endif
-    int tkip_mmic_err;
+    int sec_err = 0;
+    bool mic_err = false, decode_err = false;
 #ifdef CONFIG_SSV_SMARTLINK
     {
         void smartlink_nl_send_msg(struct sk_buff *skb);
@@ -5405,7 +5528,7 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
 #endif
             skb_trim(rx_skb, rx_skb->len-sc->sh->rx_pinfo_pad);
             smartlink_nl_send_msg(rx_skb);
-            return;
+            goto drop_rx;
         }
     }
 #endif
@@ -5427,6 +5550,33 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
 #endif
     fc = hdr->frame_control;
     skb_info = (SKB_info *)rx_skb->head;
+	
+		if(ieee80211_is_beacon(hdr->frame_control))
+	{
+		struct ieee80211_mgmt *mgmt_tmp = NULL;
+#ifdef 	SSV_SUPPORT_HAL	
+	    mgmt_tmp = (struct ieee80211_mgmt *)(rx_skb->data +  HAL_GET_RX_DESC_SIZE(sc->sh));	
+#else	
+		mgmt_tmp = (struct ieee80211_mgmt *)(rx_skb->data + SSV6XXX_RX_DESC_LEN );
+#endif
+	    mgmt_tmp->u.beacon.timestamp = cpu_to_le64(ssv6200_get_systime_us()+ 10*1000*1000);  
+	    //printk("beacon timestamp = %lld\n", mgmt_tmp->u.beacon.timestamp);
+	}
+
+	if(ieee80211_is_probe_resp(hdr->frame_control))
+	{
+		struct ieee80211_mgmt *mgmt_tmp = NULL;
+		
+#ifdef 	SSV_SUPPORT_HAL	
+	    mgmt_tmp = (struct ieee80211_mgmt *)(rx_skb->data +  HAL_GET_RX_DESC_SIZE(sc->sh));	
+#else	
+		mgmt_tmp = (struct ieee80211_mgmt *)(rx_skb->data + SSV6XXX_RX_DESC_LEN );
+#endif	
+		mgmt_tmp->u.probe_resp.timestamp = cpu_to_le64(ssv6200_get_systime_us()+ 10*1000*1000) ;
+	    //printk("probe_resp timestamp = %lld\n", mgmt_tmp->u.probe_resp.timestamp);
+	}
+	
+	
 #ifdef SSV_SUPPORT_HAL
     HAL_RC_RX_DATA_HANDLER(sc, rx_skb, rate_idx);
 #else
@@ -5453,8 +5603,15 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
     rxs->freq = chan->center_freq;
     rxs->antenna = 1;
     SSV_RC_MAC80211_RATE_IDX(sc, rate_idx, rxs);
+    sta = ssv6xxx_find_sta_by_rx_skb(sc, rx_skb);
+    if (sta){
+        struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)(rx_skb->data + sc->sh->rx_desc_len);
+        if (ieee80211_is_data(hdr->frame_control)){
+            sc->rx_data_exist = true;
+        }
+    }
 #ifdef SSV_SUPPORT_HAL
-    HAL_UPDATE_RSSI(sc, rx_skb, rxs);
+    HAL_UPDATE_RXSTATUS(sc, rx_skb, rxs);
 #else
     if ((rate_idx < SSV62XX_G_RATE_INDEX && rxphypad->RSVD == 0) ||
         (rate_idx >= SSV62XX_G_RATE_INDEX && rxphy->service == 0))
@@ -5523,7 +5680,7 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
     rxs->flag |= RX_FLAG_MACTIME_MPDU;
 #else
-    rxs->flag |= RX_FLAG_MACTIME_START;
+    //rxs->flag |= RX_FLAG_MACTIME_START;
 #endif
     rxs->rx_flags = 0;
 #endif
@@ -5539,9 +5696,20 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
         if (sta == NULL)
             goto drop_rx;
         sta_priv = (struct ssv_sta_priv_data *)sta->drv_priv;
-        vif = sta_priv->sta_info->vif;
-        if (vif == NULL)
+#ifndef IRQ_PROC_RX_DATA
+        down_read(&sc->sta_info_sem);
+#else
+        while(!down_read_trylock(&sc->sta_info_sem));
+#endif
+        if ((sc->sta_info[sta_priv->sta_idx].s_flags & STA_FLAG_VALID) == 0) {
+            up_read(&sc->sta_info_sem);
             goto drop_rx;
+        }
+        vif = sc->sta_info[sta_priv->sta_idx].vif;
+        if (vif == NULL) {
+            up_read(&sc->sta_info_sem);
+            goto drop_rx;
+        }
         if (is_broadcast_ether_addr(hdr->addr1))
         {
             vif_priv = (struct ssv_vif_priv_data *)vif->drv_priv;
@@ -5553,6 +5721,7 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
             rx_hw_dec = sta_priv->has_hw_decrypt;
             do_sw_dec = sta_priv->need_sw_decrypt;
         }
+        up_read(&sc->sta_info_sem);
         #if 0
         if (rx_count++ < 20)
         {
@@ -5577,7 +5746,7 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
         _ssv6xxx_hexdump("================================================================\n"
                          "RX frame", (const u8 *)rx_skb->data, rx_skb->len);
     }
-    tkip_mmic_err = SSV_GET_TKIP_MMIC_ERR(sc->sh, rx_skb);
+    sec_err = SSV_GET_SEC_DECODE_ERR(sc->sh, rx_skb, &mic_err, &decode_err);
     skb_pull(rx_skb, sc->sh->rx_desc_len);
     skb_trim(rx_skb, rx_skb->len - sc->sh->rx_pinfo_pad);
 #ifdef CONFIG_P2P_NOA
@@ -5587,6 +5756,11 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
 #ifdef USE_LOCAL_CRYPTO
     if ((rx_hw_dec == false) && (do_sw_dec == true))
     {
+        int ret = 0;
+#ifdef MULTI_THREAD_ENCRYPT
+        struct ssv_encrypt_task_list *ta = NULL;
+        unsigned long flags;
+#endif
 #ifndef MULTI_THREAD_ENCRYPT
         ret = ssv6xxx_skb_decrypt(rx_skb, sta, sc);
         if (ret < 0)
@@ -5645,9 +5819,25 @@ static void _proc_data_rx_skb (struct ssv_softc *sc, struct sk_buff *rx_skb)
         rxs = IEEE80211_SKB_RXCB(rx_skb);
         hdr->frame_control = hdr->frame_control & ~(cpu_to_le16(IEEE80211_FCTL_PROTECTED));
         rxs->flag |= (RX_FLAG_DECRYPTED|RX_FLAG_IV_STRIPPED);
-        if (tkip_mmic_err) {
-            rxs->flag |= RX_FLAG_MMIC_ERROR;
-            printk("TKIP MMIC error, set RX_FLAG_MMIC_ERROR flag\n");
+        if (sec_err) {
+            vif_priv = (struct ssv_vif_priv_data *)vif->drv_priv;
+            if ((vif_priv->pair_cipher == SSV_CIPHER_TKIP) || (vif_priv->group_cipher == SSV_CIPHER_TKIP)) {
+                if (mic_err) {
+                    rxs->flag |= RX_FLAG_MMIC_ERROR;
+                    printk("TKIP MMIC error, set RX_FLAG_MMIC_ERROR flag\n");
+                }
+                if (decode_err) {
+                    if (sc->sh->cfg.mic_err_notify) {
+                        rxs->flag |= RX_FLAG_MMIC_ERROR;
+                        printk("decode error frame add mic err flag to notify nl80211\n");
+                    } else {
+                        printk("Drop decode error frame\n");
+                        goto drop_rx;
+                    }
+                }
+            } else {
+                goto drop_rx;
+            }
         }
     }
 #if 0
@@ -5746,6 +5936,7 @@ void ssv6xxx_beacon_miss_work(struct work_struct *work)
     skb = ssv_skb_alloc(sc, sizeof(struct ieee80211_hdr_3addr));
     if (!skb)
         return;
+    down_read(&sc->sta_info_sem);
     for (i = 0; i < SSV6200_MAX_VIF; i++) {
         if (sc->vif_info[i].vif == NULL)
             continue;
@@ -5755,17 +5946,19 @@ void ssv6xxx_beacon_miss_work(struct work_struct *work)
     if (i == SSV6200_MAX_VIF)
         goto out;
     vif_priv = (struct ssv_vif_priv_data *)sc->vif_info[i].vif->drv_priv;
+    if (list_empty(&vif_priv->sta_list)) {
+        printk("%s(): sta_list is empty.\n", __func__);
+        goto out;
+    }
     list_for_each_entry(sta_priv_iter, &vif_priv->sta_list, list)
     {
-        if (sta_priv_iter->sta_info->s_flags & STA_FLAG_VALID)
-            break;;
+        if (sc->sta_info[sta_priv_iter->sta_idx].s_flags & STA_FLAG_VALID)
+            break;
     }
-    if (!sta_priv_iter->sta_info)
-        goto out;
     signal = -(sta_priv_iter->beacon_rssi >> RSSI_DECIMAL_POINT_SHIFT);
     if (signal < BEACON_MISS_RSSI_THRESHOLD)
         goto out;
-    sta = sta_priv_iter->sta_info->sta;
+    sta = sc->sta_info[sta_priv_iter->sta_idx].sta;
     if (!sta)
         goto out;
     vif_idx = sc->vif_info[i].vif_priv->vif_idx;
@@ -5773,6 +5966,9 @@ void ssv6xxx_beacon_miss_work(struct work_struct *work)
     skb_put(skb, tx_desc_size+sizeof(struct ieee80211_hdr_3addr));
     nullfunc = (struct ieee80211_hdr_3addr *)(skb->data + tx_desc_size);
     memset(nullfunc, 0, sizeof(struct ieee80211_hdr_3addr));
+    sc->tx.seq_no += 0x10;
+    nullfunc->seq_ctrl &= cpu_to_le16(IEEE80211_SCTL_FRAG);
+    nullfunc->seq_ctrl |= cpu_to_le16(sc->tx.seq_no);
     nullfunc->frame_control = cpu_to_le16(IEEE80211_FTYPE_DATA |
                         IEEE80211_STYPE_NULLFUNC |
                         IEEE80211_FCTL_TODS);
@@ -5785,10 +5981,13 @@ void ssv6xxx_beacon_miss_work(struct work_struct *work)
     ret = HCI_SEND(sc->sh, skb, 4);
  if (ret < 0)
   goto out;
+    up_read(&sc->sta_info_sem);
     return;
 out:
+    up_read(&sc->sta_info_sem);
     dev_kfree_skb_any(skb);
 }
+#ifdef SSV_SUPPORT_HAL
 static void ssv6xxx_process_rx_lpbk_ptk(struct ssv_softc *sc, struct sk_buff *skb)
 {
     struct ieee80211_hdr_3addr *hdr = NULL;
@@ -5797,6 +5996,10 @@ static void ssv6xxx_process_rx_lpbk_ptk(struct ssv_softc *sc, struct sk_buff *sk
     hdr_offset = SSV_GET_RX_DESC_HDR_OFFSET(sc->sh, skb);
     hdr = (struct ieee80211_hdr_3addr *)(skb->data + hdr_offset);
     hdrlen = ieee80211_hdrlen(hdr->frame_control);
+    if (0 < SSV_CHK_LPBK_RX_RATE_DESC(sc->sh, skb)) {
+        sc->lpbk_err_cnt++;
+        goto out;
+    }
     payload = (u8 *)hdr + hdrlen;
     for (i = (hdr_offset + hdrlen); i < (skb->len - 4); i++) {
         if (hdr->seq_ctrl != *payload) {
@@ -5806,9 +6009,11 @@ static void ssv6xxx_process_rx_lpbk_ptk(struct ssv_softc *sc, struct sk_buff *sk
         }
         payload++;
     }
+out:
     sc->lpbk_rx_pkt_cnt++;
     dev_kfree_skb_any(skb);
 }
+#endif
 static bool _process_host_event(struct ssv_softc *sc, struct sk_buff *skb, bool *has_ba_processed)
 {
     u32 c_type;
@@ -5894,7 +6099,7 @@ static bool _process_host_event(struct ssv_softc *sc, struct sk_buff *skb, bool 
         }
 #endif
   case SOC_EVT_BEACON_LOSS:
-            printk("Beacon Loss dectection!!\n");
+         dbgprint(&sc->cmd_data, sc->log_ctrl, LOG_BEACON, "beacon dectection trigger\n");
          dev_kfree_skb_any(skb);
             queue_work(sc->config_wq, &sc->beacon_miss_work);
             if (sc->isAssoc)
@@ -5902,6 +6107,10 @@ static bool _process_host_event(struct ssv_softc *sc, struct sk_buff *skb, bool 
    break;
   case SOC_EVT_TX_STUCK_RESP:
             printk("receive event tx_stuck!!\n");
+            dev_kfree_skb_any(skb);
+   break;
+  case SOC_EVT_SW_BEACON_RESP:
+            printk("soft-beacon start!!\n");
             dev_kfree_skb_any(skb);
    break;
         default:
@@ -5948,13 +6157,11 @@ void _process_rx_q (struct ssv_softc *sc, struct sk_buff_head *rx_q, spinlock_t 
  int data_offset, data_length;
  unsigned char *pdata, *psdata;
  struct hci_rx_aggr_info *rx_aggr_info;
-    bool last_packet = false;
+    bool last_packet = false, no_ba_result = false;
     #ifdef USE_FLUSH_RETRY
     bool has_ba_processed = false;
     #endif
     while (1) {
-        if (sc->remove_sta_in_process)
-            break;
         if (rx_q_lock != NULL) {
             spin_lock_irqsave(rx_q_lock, flags);
             skb = __skb_dequeue(rx_q);
@@ -6023,15 +6230,20 @@ void _process_rx_q (struct ssv_softc *sc, struct sk_buff_head *rx_q, spinlock_t 
       if (_process_rx_umac(sc->umac, sskb))
        continue;
    if (c_type == RATE_RPT) {
-    SSV_RATE_REPORT_HANDLER(sc, sskb);
+    SSV_RATE_REPORT_HANDLER(sc, sskb, &no_ba_result);
+                #ifdef USE_FLUSH_RETRY
+                has_ba_processed = no_ba_result;
+                #endif
     continue;
    }
          if (_process_host_event(sc, sskb, &has_ba_processed))
     continue;
+#ifdef SSV_SUPPORT_HAL
             if (sc->lpbk_enable) {
                 ssv6xxx_process_rx_lpbk_ptk(sc, sskb);
                 continue;
             }
+#endif
             hdr = (struct ieee80211_hdr *)(sskb->data + sc->sh->rx_desc_len);
             if (ieee80211_is_back(hdr->frame_control)) {
                 SSV_AMPDU_BA_HANDLER(sc, sc->hw, sskb, tx_pkt_run_no);
@@ -6059,6 +6271,15 @@ void _process_rx_q (struct ssv_softc *sc, struct sk_buff_head *rx_q, spinlock_t 
     }
     #endif
 }
+int ssv6200_is_rx_q_full(void *args)
+{
+    struct ssv_softc *sc=args;
+    if (skb_queue_len(&sc->rx_skb_q) > sc->sh->cfg.rx_threshold) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
 #if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
 int ssv6200_rx(struct sk_buff_head *rx_skb_q, void *args)
 #else
@@ -6073,13 +6294,8 @@ int ssv6200_rx(struct sk_buff *rx_skb, void *args)
         return 0;
     #endif
     #if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
-    {
-    unsigned long flags;
-    spin_lock_irqsave(&sc->rx_skb_q.lock, flags);
     while (skb_queue_len(rx_skb_q))
-        __skb_queue_tail(&sc->rx_skb_q, __skb_dequeue(rx_skb_q));
-    spin_unlock_irqrestore(&sc->rx_skb_q.lock, flags);
-    }
+        skb_queue_tail(&sc->rx_skb_q, skb_dequeue(rx_skb_q));
     #else
     skb_queue_tail(&sc->rx_skb_q, rx_skb);
     #endif
@@ -6115,7 +6331,8 @@ void ssv6xxx_rx_stuck_process(struct work_struct *work)
                 if (sc->primary_edca_mib > edca_threshold) {
                     sc->rx_stuck_idle_time = 0;
                     sc->rx_stuck_reset_time = cur_jiffies;
-                    queue_work(sc->config_wq, &sc->hw_restart_work);
+                    if (sc->bScanning == false)
+                        queue_work(sc->config_wq, &sc->hw_restart_work);
                 }
             }
         }
@@ -6124,10 +6341,9 @@ void ssv6xxx_rx_stuck_process(struct work_struct *work)
 void ssv6xxx_mib_edca_process(struct work_struct *work)
 {
  struct ssv_softc *sc = container_of(work, struct ssv_softc, mib_edca_work);
-    int primary = 0, secondary = 0;
     if (!sc->sh)
         return;
-    SSV_EDCA_STAT(sc->sh, &primary, &secondary);
+    SSV_EDCA_STAT(sc->sh);
 }
 void ssv6xxx_tx_poll_process(struct work_struct *work)
 {
@@ -6136,14 +6352,56 @@ void ssv6xxx_tx_poll_process(struct work_struct *work)
         return;
     SSV_SEND_TX_POLL_CMD(sc->sh, SSV6XXX_TX_POLL_RESET);
 }
-#ifdef SSV_SUPPORT_HAL
+#ifdef CONFIG_SSV_CCI_IMPROVEMENT
 void ssv6xxx_cci_clean_process(struct work_struct *work)
 {
  struct ssv_softc *sc = container_of(work, struct ssv_softc, cci_clean_work);
     if (!sc->sh)
         return;
+#ifndef SSV_SUPPORT_HAL
+    SMAC_REG_READ(sc->sh, 0xCE01000C, &sc->pre_11b_rx_abbctune);
+    SMAC_REG_READ(sc->sh, ADR_RX_11B_CCA_CONTROL, &sc->pre_11b_cca_control);
+    SMAC_REG_READ(sc->sh, ADR_RX_11B_CCA_1, &sc->pre_11b_cca_1);
+    SMAC_REG_WRITE(sc->sh, 0xCE01000C, (sc->pre_11b_rx_abbctune | (0x3F << 3)));
+    SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, 0x0);
+    SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_1, RX_11B_CCA_IN_SCAN);
+#else
     HAL_UPDATE_SCAN_CCI_SETTING(sc);
+#endif
+    sc->cci_current_level = MAX_CCI_LEVEL;
+    sc->cci_set = true;
 }
+void ssv6xxx_cci_set_process(struct work_struct *work)
+{
+ struct ssv_softc *sc = container_of(work, struct ssv_softc, cci_set_work);
+    if (!sc->sh)
+        return;
+#ifndef SSV_SUPPORT_HAL
+    SMAC_REG_WRITE(sc->sh, 0xCE01000C, sc->pre_11b_rx_abbctune);
+    SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_CONTROL, sc->pre_11b_cca_control);
+    SMAC_REG_WRITE(sc->sh, ADR_RX_11B_CCA_1, sc->pre_11b_cca_1);
+#else
+    HAL_RECOVERY_SCAN_CCI_SETTING(sc);
+#endif
+}
+#endif
+void ssv6xxx_set_txpwr_process(struct work_struct *work)
+{
+ struct ssv_softc *sc = container_of(work, struct ssv_softc, set_txpwr_work);
+    if (!sc->sh)
+        return;
+#ifdef SSV_SUPPORT_HAL
+    HAL_UPDATE_RF_PWR(sc);
+#endif
+}
+void ssv6xxx_thermal_monitor_process(struct work_struct *work)
+{
+ struct ssv_softc *sc = container_of(work, struct ssv_softc, thermal_monitor_work);
+    if (!sc->sh)
+        return;
+    SSV_DO_TEMPERATURE_COMPENSATION(sc->sh);
+}
+#ifdef SSV_SUPPORT_HAL
 void ssv6xxx_rc_report_work(struct work_struct *work)
 {
     struct ssv_softc *sc = container_of(work, struct ssv_softc, rc_report_work);
@@ -6214,7 +6472,13 @@ void ssv6xxx_rc_report_work(struct work_struct *work)
             dev_kfree_skb_any(skb);
             continue;
   }
+        down_read(&sc->sta_info_sem);
         ssv_sta = &sc->sta_info[hw_wsid];
+        if ((ssv_sta->s_flags & STA_FLAG_VALID) == 0) {
+            up_read(&sc->sta_info_sem);
+            dev_warn(sc->dev, "%s(): ssv_info is gone. (%d)\n", __FUNCTION__, hw_wsid);
+            return;
+        }
         if (ssv_sta->sta == NULL)
         {
             dev_err(sc->dev, "Null STA %d for RC report.\n", hw_wsid);
@@ -6279,6 +6543,7 @@ void ssv6xxx_rc_report_work(struct work_struct *work)
         }
         dev_kfree_skb_any(skb);
     }
+    up_read(&sc->sta_info_sem);
     sc->rc_report_sechedule = 0;
 }
 #endif
@@ -6331,12 +6596,14 @@ void ssv6xxx_foreach_sta (struct ssv_softc *sc, void (*sta_func)(struct ssv_soft
         }
     }
 #else
+    down_read(&sc->sta_info_sem);
     for (i = 0; i < SSV_NUM_STA; i++)
     {
         if ((sc->sta_info[i].s_flags & STA_FLAG_VALID) == 0)
             continue;
         (*sta_func)(sc, &sc->sta_info[i], param);
     }
+    up_read(&sc->sta_info_sem);
 #endif
 }
 void ssv6xxx_foreach_vif_sta (struct ssv_softc *sc,
@@ -6358,11 +6625,9 @@ void ssv6xxx_foreach_vif_sta (struct ssv_softc *sc,
     {
         BUG_ON(sta_priv_iter == NULL);
         BUG_ON((size_t)sta_priv_iter < 0x30000);
-        BUG_ON(sta_priv_iter->sta_info == NULL);
-        BUG_ON((size_t)sta_priv_iter->sta_info < 0x30000);
-        if ((sta_priv_iter->sta_info->s_flags & STA_FLAG_VALID) == 0)
+        if ((sc->sta_info[sta_priv_iter->sta_idx].s_flags & STA_FLAG_VALID) == 0)
             continue;
-        (*sta_func)(sc, vif_info, sta_priv_iter->sta_info, param);
+        (*sta_func)(sc, vif_info, &sc->sta_info[sta_priv_iter->sta_idx], param);
     }
 }
 #ifdef CONFIG_SSV6XXX_DEBUGFS

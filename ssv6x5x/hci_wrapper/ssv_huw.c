@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -405,7 +404,7 @@ int ssv_huw_probe(struct platform_device *pdev)
     g_huw_dev.priv = (pdev->dev.platform_data);
     g_huw_dev.dev = &(pdev->dev);
     ssv_huw_read_hci_info(&g_huw_dev);
-    ssv6xxx_hci_register(&(g_huw_dev.hci));
+    tu_ssv6xxx_hci_register(&(g_huw_dev.hci));
     dev = MKDEV(ssv_sdiobridge_ioctl_major, 0);
     alloc_ret = alloc_chrdev_region(&dev, 0, num_of_dev, FILE_DEVICE_SSVSDIO_NAME);
     if (alloc_ret)
@@ -432,7 +431,7 @@ int ssv_huw_remove(struct platform_device *pdev)
 {
     dev_t dev;
     int ret = 0;
-    ssv6xxx_hci_deregister();
+    tu_ssv6xxx_hci_deregister();
     memset(&g_huw_dev, 0 , sizeof(g_huw_dev));
     dev = MKDEV(ssv_sdiobridge_ioctl_major, 0);
     device_destroy(fc,dev);
@@ -460,7 +459,7 @@ static struct platform_driver ssv_huw_driver =
 #endif
     .id_table = huw_id_table,
     .driver = {
-        .name = "SSV WLAN driver",
+        .name = "TU SSV WLAN driver",
         .owner = THIS_MODULE,
     }
 };

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -49,14 +48,6 @@
 const struct mcs_group minstrel_mcs_groups[] = {
     MCS_GROUP(1, 0, 0),
     MCS_GROUP(1, 1, 0),
-};
-const u16 ampdu_max_transmit_length[RATE_TABLE_SIZE] =
-{
-    0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    4429, 8860, 13291, 17723, 26586, 35448, 39880, 44311,
-    4921, 9844, 14768, 19692, 29539, 39387, 44311, 49234,
-    4429, 8860, 13291, 17723, 26586, 35448, 39880, 44311
 };
 static u8 sample_table[SAMPLE_COLUMNS][MCS_GROUP_RATES];
 static int minstrel_ewma(int old, int new, int weight)

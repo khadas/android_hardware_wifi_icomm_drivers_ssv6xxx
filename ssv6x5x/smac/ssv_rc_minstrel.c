@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -59,44 +58,57 @@ static void ssv_minstrel_update_stats(struct ssv_softc *sc, struct ssv_minstrel_
  u32 max_prob = 0, index_max_prob = 0;
  u32 usecs;
  int i;
+ bool no_update = false;
  struct rc_setting *rc_setting = &sc->sh->cfg.rc_setting;
+    for (i = 0; i < smi->n_rates; i++) {
+        struct ssv_minstrel_rate *mr = &minstrel_sta_priv->ratelist[i];
+        if (mr->attempts)
+            break;
+    }
+    if (i == smi->n_rates){
+        no_update = true;
+    }
  smi->stats_update = jiffies;
- for (i = 0; i < smi->n_rates; i++) {
-  struct ssv_minstrel_rate *mr = &minstrel_sta_priv->ratelist[i];
-  usecs = mr->perfect_tx_time;
-  if (!usecs)
-   usecs = 1000000;
-  if (mr->attempts) {
-   mr->succ_hist += mr->success;
-   mr->att_hist += mr->attempts;
-   mr->cur_prob = MINSTREL_FRAC(mr->success, mr->attempts);
-   if ((!mr->att_hist) || (mr->probability < MINSTREL_FRAC(10, 100)))
-       mr->probability = mr->cur_prob;
-      else
-       mr->probability = minstrel_ewma(mr->probability, mr->cur_prob, EWMA_LEVEL);
-   mr->cur_tp = mr->probability * (1000000 / usecs);
-   mr->last_jiffies = jiffies;
-        } else {
-      if (time_after(jiffies, mr->last_jiffies + msecs_to_jiffies(rc_setting->aging_period))){
-          mr->probability = minstrel_ewma(mr->probability, 0, EWMA_LEVEL);
-          mr->last_jiffies = jiffies;
-            }
+ if (no_update == false){
+     for (i = 0; i < smi->n_rates; i++) {
+      struct ssv_minstrel_rate *mr = &minstrel_sta_priv->ratelist[i];
+      usecs = mr->perfect_tx_time;
+      if (!usecs)
+       usecs = 1000000;
+      if (mr->attempts) {
+       mr->succ_hist += mr->success;
+       mr->att_hist += mr->attempts;
+       mr->cur_prob = MINSTREL_FRAC(mr->success, mr->attempts);
+       if ((!mr->att_hist) || (mr->probability < MINSTREL_FRAC(10, 100)))
+           mr->probability = mr->cur_prob;
+          else
+           mr->probability = minstrel_ewma(mr->probability, mr->cur_prob, EWMA_LEVEL);
+       mr->cur_tp = mr->probability * (1000000 / usecs);
+       mr->last_jiffies = jiffies;
+            } else {
+          if (time_after(jiffies, mr->last_jiffies + msecs_to_jiffies(rc_setting->aging_period))){
+              if (sc->bScanning == false) {
+                  mr->probability = minstrel_ewma(mr->probability, 0, EWMA_LEVEL);
+              }
+              mr->last_jiffies = jiffies;
+                }
+         }
+      mr->last_success = mr->success;
+      mr->last_attempts = mr->attempts;
+      mr->success = 0;
+      mr->attempts = 0;
+      if ((mr->probability > MINSTREL_FRAC(95, 100)) || (mr->probability < MINSTREL_FRAC(10, 100))) {
+       mr->adjusted_retry_count = mr->retry_count >> 1;
+       if (mr->adjusted_retry_count > 2)
+        mr->adjusted_retry_count = 2;
+       mr->sample_limit = 4;
+      } else {
+       mr->sample_limit = -1;
+       mr->adjusted_retry_count = mr->retry_count;
+      }
+      if (!mr->adjusted_retry_count)
+       mr->adjusted_retry_count = 2;
      }
-  mr->last_success = mr->success;
-  mr->last_attempts = mr->attempts;
-  mr->success = 0;
-  mr->attempts = 0;
-  if ((mr->probability > MINSTREL_FRAC(95, 100)) || (mr->probability < MINSTREL_FRAC(10, 100))) {
-   mr->adjusted_retry_count = mr->retry_count >> 1;
-   if (mr->adjusted_retry_count > 2)
-    mr->adjusted_retry_count = 2;
-   mr->sample_limit = 4;
-  } else {
-   mr->sample_limit = -1;
-   mr->adjusted_retry_count = mr->retry_count;
-  }
-  if (!mr->adjusted_retry_count)
-   mr->adjusted_retry_count = 2;
  }
  for (i = 0; i < smi->n_rates; i++) {
   struct ssv_minstrel_rate *mr = &minstrel_sta_priv->ratelist[i];
@@ -661,8 +673,8 @@ static int ssv_minstrel_stats_open(struct inode *inode, struct file *file)
       (unsigned long long)mhr->att_hist);
    }
   }
-  p += sprintf(p, "\nTotal packet count::    total %llu      lookaround %llu\n",
-    ht->total_packets, ht->sample_packets);
+  p += sprintf(p, "\nTotal packet count::    total %llu      lookaround %llu, short GI state = %d\n",
+    ht->total_packets, ht->sample_packets, ht->sgi_state);
  }
  ms->len = p - ms->buf;
  return 0;

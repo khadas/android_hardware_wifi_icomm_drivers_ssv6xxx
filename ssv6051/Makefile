@@ -1,6 +1,6 @@
 PLATFORMS = ssv6051
 
-KBUILD_TOP := $(M)
+KBUILD_TOP := $(PWD)/hardware/wifi/icomm/drivers/ssv6xxx/ssv6051
 include $(KBUILD_TOP)/$(PLATFORMS).cfg
 include $(KBUILD_TOP)/platform-config.mak
 
@@ -57,7 +57,7 @@ KERN_SRCS_S += crypto/sha1-armv4-large.S
 endif
 
 
-KERN_SRCS += $(PLATFORMS)-generic-wlan.c
+#KERN_SRCS += $(PLATFORMS)-generic-wlan.c
 
 $(KMODULE_NAME)-y += $(KERN_SRCS_S:.S=.o)
 $(KMODULE_NAME)-y += $(KERN_SRCS:.c=.o)

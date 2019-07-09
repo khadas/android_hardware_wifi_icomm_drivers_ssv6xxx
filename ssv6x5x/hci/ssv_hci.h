@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -96,6 +95,7 @@ struct ssv6xxx_hci_info {
     #else
     int (*hci_rx_cb)(struct sk_buff *, void *);
     #endif
+    int (*hci_is_rx_q_full)(void *);
     void (*hci_pre_tx_cb)(struct sk_buff *, void *);
     void (*hci_post_tx_cb)(struct sk_buff_head *, void *);
     int (*hci_tx_flow_ctrl_cb)(void *, int, bool, int debug);
@@ -109,11 +109,11 @@ struct ssv6xxx_hci_info {
     void (*skb_free) (void *app_param, struct sk_buff *skb);
     void (*write_hw_config_cb)(void *param, u32 addr, u32 value);
 };
-int ssv6xxx_hci_deregister(struct ssv6xxx_hci_info *);
-int ssv6xxx_hci_register(struct ssv6xxx_hci_info *);
+int tu_ssv6xxx_hci_deregister(struct ssv6xxx_hci_info *);
+int tu_ssv6xxx_hci_register(struct ssv6xxx_hci_info *);
 #if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
-int ssv6xxx_hci_init(void);
-void ssv6xxx_hci_exit(void);
+int tu_ssv6xxx_hci_init(void);
+void tu_ssv6xxx_hci_exit(void);
 #endif
 #ifdef SSV_SUPPORT_HAL
 #define SSV_READRG_HCI_INQ_INFO(_hci_ctrl,_used_id,_tx_use_page) \

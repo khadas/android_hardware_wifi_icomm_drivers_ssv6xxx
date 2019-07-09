@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -14,17 +13,21 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/version.h>
 #include <ssv6200.h>
 #include <linux/types.h>
 #include <linux/nl80211.h>
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #include <linux/nl80211.h>
 #include <linux/etherdevice.h>
 #include <linux/delay.h>
 #include <linux/version.h>
 #include <linux/time.h>
 #include <linux/kthread.h>
-#include <net/mac80211.h>
 #include <ssv6200.h>
 #include "p2p.h"
 #include "dev.h"

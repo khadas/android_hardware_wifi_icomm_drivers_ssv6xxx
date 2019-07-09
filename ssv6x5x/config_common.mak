@@ -1,7 +1,16 @@
 
-CONFIG_SSV6200_CORE=m
+CONFIG_SSV6X5X=m
 #ccflags-y += -DCONFIG_SSV6200_CORE
+CONFIG_MAC80211_LEDS=y
+CONFIG_MAC80211_DEBUGFS=y
+CONFIG_MAC80211_MESH=y
+CONFIG_PM=y
+CONFIG_MAC80211_RC_MINSTREL=y
+CONFIG_MAC80211_RC_MINSTREL_HT=y
 
+//ccflags-y += -D_ICOMM_MAC80211_
+
+ccflags-y += -D__CHECK_ENDIAN__ -DDEBUG
 ###########################################################################
 # Compiler options                                                        #
 ###########################################################################
@@ -17,7 +26,6 @@ ccflags-y += -g
 # DCONFIG_SSV_CABRIO_A/DCONFIG_SSV_CABRIO_A is not valid in driver.
 ccflags-y += -DSSV_SUPPORT_HAL
 ccflags-y += -DSSV_SUPPORT_SSV6006
-ccflags-y += -DSSV_SUPPORT_TURISMOA
 
 ############################################################
 # If you change the settings, please change the file synchronization
@@ -42,7 +50,7 @@ ccflags-y += -DCONFIG_SSV6200_CLI_ENABLE
 #ccflags-y += -DCONFIG_SSV_DPD
 
 #ccflags-y += -DCONFIG_SSV_CABRIO_MB_DEBUG
-ccflags-y += -DCONFIG_SSV6XXX_DEBUGFS
+
 #ccflags-y += -DCONFIG_SSV6XXX_HW_DEBUG
 
 #SDIO
@@ -54,7 +62,7 @@ ccflags-y += -DCONFIG_SSV_TX_LOWTHRESHOLD
 ############################################################
 # Rate control update for MPDU.
 ############################################################
-ccflags-y += -DRATE_CONTROL_REALTIME_UPDATA
+ccflags-y += -DRATE_CONTROL_REALTIME_UPDATE
 
 #workaround
 #ccflags-y += -DCONFIG_SSV_CABRIO_EXT_PA
@@ -84,24 +92,32 @@ ccflags-y += -DENABLE_INCREMENTAL_AGGREGATION
 # Generic decision table applicable to both AP and STA modes.
 ccflags-y += -DUSE_GENERIC_DECI_TBL
 
+########################################################
+## The following definition move to indivdual platform
+## should not enable again here. 
+
 # Use crypto in SSV driver.
 ccflags-y += -DUSE_LOCAL_CRYPTO
 ccflags-y += -DUSE_LOCAL_WEP_CRYPTO
 ccflags-y += -DUSE_LOCAL_TKIP_CRYPTO
 ccflags-y += -DUSE_LOCAL_CCMP_CRYPTO
 ccflags-y += -DUSE_LOCAL_SMS4_CRYPTO
-
 ccflags-y += -DCONFIG_SSV_WAPI
+ccflags-y += -DHAS_CRYPTO_LOCK
 
-ccflags-y += -DFW_WSID_WATCH_LIST
+#ccflags-y += -DCONFIG_IRQ_DEBUG_COUNT
+#ccflags-y += -DCONFIG_SSV6XXX_DEBUGFS
+#### end of move to individual platform
+
+
+
+#ccflags-y += -DFW_WSID_WATCH_LIST
 #ccflags-y += -DUSE_BATCH_RX
-ccflags-y += -DCONFIG_IRQ_DEBUG_COUNT
 #ccflags-y += -DCONFIG_SSV_SUPPORT_AES_ASM
 
 
 ccflags-y += -DSSV6200_ECO
 #ccflags-y += -DENABLE_WAKE_IO_ISR_WHEN_HCI_ENQUEUE
-ccflags-y += -DHAS_CRYPTO_LOCK
 #ccflags-y += -DENABLE_TX_Q_FLOW_CONTROL
 
 #ccflags-y += -DCONFIG_DEBUG_SKB_TIMESTAMP

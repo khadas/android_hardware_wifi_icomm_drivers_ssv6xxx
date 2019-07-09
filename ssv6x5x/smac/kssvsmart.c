@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -15,7 +14,11 @@
  */
 
 #include <ssv6200.h>
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #include <linux/module.h>
 #include <smac/dev.h>
 #include "kssvsmart.h"
@@ -91,7 +94,7 @@ int ssv6xxx_send_si_cmd(u32 smart_icomm_cmd)
     int ret;
     struct ssv_softc *ssv_dbg_sc;
     struct ssv_hw *sh;
-    ssv_dbg_sc = ssv6xxx_driver_attach(CABRIO_DRVER_NAME);
+    ssv_dbg_sc = ssv6xxx_driver_attach(SSV_DRVER_NAME);
     if(ssv_dbg_sc == NULL)
     {
         printk("Get ssv_dbg_sc fail!!!\n");

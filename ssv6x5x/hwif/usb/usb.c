@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -55,6 +54,7 @@ static const struct usb_device_id ssv_usb_table[] = {
 };
 MODULE_DEVICE_TABLE(usb, ssv_usb_table);
 extern int ssv_rx_nr_recvbuff;
+extern int ssv_rx_use_wq;
 struct ssv6xxx_usb_glue {
  struct device *dev;
  struct platform_device *core;
@@ -74,6 +74,8 @@ struct ssv6xxx_usb_glue {
  u16 sequence;
  u16 err_cnt;
  bool dev_ready;
+ struct workqueue_struct *wq;
+ struct ssv6xxx_usb_work_struct rx_work;
  struct tasklet_struct rx_tasklet;
  u32 *rx_pkt;
  void *rx_cb_args;
@@ -82,6 +84,7 @@ struct ssv6xxx_usb_glue {
 #else
     int (*rx_cb)(struct sk_buff *rx_skb, void *args);
 #endif
+    int (*is_rx_q_full)(void *);
 };
 static void ssv6xxx_usb_recv_rx(struct ssv6xxx_usb_glue *glue, struct ssv6xxx_rx_buf *ssv_rx_buf);
 #define to_ssv6xxx_usb_dev(d) container_of(d, struct ssv6xxx_usb_glue, kref)
@@ -151,6 +154,11 @@ static void ssv6xxx_usb_delete(struct kref *kref)
     glue->ssv_rx_buf[i].rx_urb->transfer_dma);
    usb_free_urb(glue->ssv_rx_buf[i].rx_urb);
   }
+ }
+ if (ssv_rx_use_wq) {
+  destroy_workqueue(glue->wq);
+ } else {
+  tasklet_kill(&glue->rx_tasklet);
  }
  usb_put_dev(glue->udev);
  kfree(glue);
@@ -246,15 +254,70 @@ exit:
  mutex_unlock(&glue->cmd_mutex);
  return retval;
 }
-static void ssv6xxx_usb_recv_rx_tasklet(unsigned long priv)
+static void ssv6xxx_usb_recv_rx_work(struct work_struct *work)
 {
-    struct ssv6xxx_usb_glue *glue = (struct ssv6xxx_usb_glue *)priv;
+    struct ssv6xxx_usb_glue *glue = ((struct ssv6xxx_usb_work_struct *)work)->glue;
+#if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
+    struct sk_buff_head rx_list;
+#endif
     struct sk_buff *rx_mpdu;
     struct ssv6xxx_rx_buf *ssv_rx_buf;
     unsigned char *data;
+#if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
+    skb_queue_head_init(&rx_list);
+#endif
     while (NULL != (ssv_rx_buf = (struct ssv6xxx_rx_buf *)ssv6xxx_dequeue_list_node(&glue->ssv_rx_queue))) {
+        if (glue->is_rx_q_full(glue->rx_cb_args)) {
+            ssv6xxx_enqueue_list_node((struct ssv6xxx_list_node *)ssv_rx_buf, &glue->ssv_rx_queue);
+            queue_work(glue->wq, (struct work_struct *)&glue->rx_work);
+            break;
+        }
         (*glue->rx_pkt)++;
-        rx_mpdu = glue->p_wlan_data->skb_alloc(glue->p_wlan_data->skb_param, ssv_rx_buf->rx_filled, GFP_ATOMIC);
+        rx_mpdu = glue->p_wlan_data->skb_alloc(glue->p_wlan_data->skb_param, ssv_rx_buf->rx_filled,
+  GFP_KERNEL
+  );
+        if (rx_mpdu == NULL) {
+            ssv6xxx_enqueue_list_node((struct ssv6xxx_list_node *)ssv_rx_buf, &glue->ssv_rx_queue);
+            queue_work(glue->wq, (struct work_struct *)&glue->rx_work);
+            break;
+        }
+        data = skb_put(rx_mpdu, ssv_rx_buf->rx_filled);
+        memcpy(data, ssv_rx_buf->rx_buf, ssv_rx_buf->rx_filled);
+#if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
+        skb_queue_tail(&rx_list, rx_mpdu);
+#else
+        glue->rx_cb(rx_mpdu, glue->rx_cb_args);
+#endif
+        ssv6xxx_usb_recv_rx(glue, ssv_rx_buf);
+    }
+#if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
+    if (skb_queue_len(&rx_list)) {
+        glue->rx_cb(&rx_list, glue->rx_cb_args);
+    }
+#endif
+}
+static void ssv6xxx_usb_recv_rx_tasklet(unsigned long priv)
+{
+    struct ssv6xxx_usb_glue *glue = (struct ssv6xxx_usb_glue *)priv;
+#if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
+    struct sk_buff_head rx_list;
+#endif
+    struct sk_buff *rx_mpdu;
+    struct ssv6xxx_rx_buf *ssv_rx_buf;
+    unsigned char *data;
+#if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
+    skb_queue_head_init(&rx_list);
+#endif
+    while (NULL != (ssv_rx_buf = (struct ssv6xxx_rx_buf *)ssv6xxx_dequeue_list_node(&glue->ssv_rx_queue))) {
+        if (glue->is_rx_q_full(glue->rx_cb_args)) {
+            ssv6xxx_enqueue_list_node((struct ssv6xxx_list_node *)ssv_rx_buf, &glue->ssv_rx_queue);
+            tasklet_schedule(&glue->rx_tasklet);
+            break;
+        }
+        (*glue->rx_pkt)++;
+        rx_mpdu = glue->p_wlan_data->skb_alloc(glue->p_wlan_data->skb_param, ssv_rx_buf->rx_filled,
+  GFP_ATOMIC
+  );
         if (rx_mpdu == NULL) {
             ssv6xxx_enqueue_list_node((struct ssv6xxx_list_node *)ssv_rx_buf, &glue->ssv_rx_queue);
             tasklet_schedule(&glue->rx_tasklet);
@@ -262,9 +325,18 @@ static void ssv6xxx_usb_recv_rx_tasklet(unsigned long priv)
         }
         data = skb_put(rx_mpdu, ssv_rx_buf->rx_filled);
         memcpy(data, ssv_rx_buf->rx_buf, ssv_rx_buf->rx_filled);
+#if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
+        skb_queue_tail(&rx_list, rx_mpdu);
+#else
         glue->rx_cb(rx_mpdu, glue->rx_cb_args);
+#endif
         ssv6xxx_usb_recv_rx(glue, ssv_rx_buf);
     }
+#if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
+    if (skb_queue_len(&rx_list)) {
+        glue->rx_cb(&rx_list, glue->rx_cb_args);
+    }
+#endif
 }
 static void ssv6xxx_usb_recv_rx_complete(struct urb *urb)
 {
@@ -282,7 +354,11 @@ static void ssv6xxx_usb_recv_rx_complete(struct urb *urb)
         goto skip;
     }
     ssv6xxx_enqueue_list_node((struct ssv6xxx_list_node *)ssv_rx_buf, &glue->ssv_rx_queue);
-    tasklet_schedule(&glue->rx_tasklet);
+    if (ssv_rx_use_wq) {
+        queue_work(glue->wq, (struct work_struct *)&glue->rx_work);
+    } else {
+        tasklet_schedule(&glue->rx_tasklet);
+    }
     return;
 skip:
     ssv6xxx_usb_recv_rx(glue, ssv_rx_buf);
@@ -459,11 +535,11 @@ static int ssv6xxx_chk_usb_speed(struct ssv6xxx_usb_glue *glue)
 #if !defined(USE_THREAD_RX) || defined(USE_BATCH_RX)
 static void ssv6xxx_usb_rx_task(struct device *child,
    int (*rx_cb)(struct sk_buff_head *rxq, void *args),
-   void *args, u32 *pkt)
+   int (*is_rx_q_full)(void *args), void *args, u32 *pkt)
 #else
 static void ssv6xxx_usb_rx_task(struct device *child,
    int (*rx_cb)(struct sk_buff *rx_skb, void *args),
-   void *args, u32 *pkt)
+   int (*is_rx_q_full)(void *args), void *args, u32 *pkt)
 #endif
 {
  struct ssv6xxx_usb_glue *glue = dev_get_drvdata(child->parent);
@@ -472,6 +548,7 @@ static void ssv6xxx_usb_rx_task(struct device *child,
  printk("%s: nr_recvbuff=%d\n", __func__, nr_recvbuff);
  glue->rx_cb = rx_cb;
  glue->rx_cb_args = args;
+ glue->is_rx_q_full = is_rx_q_full;
  glue->rx_pkt = pkt;
  for (i = 0 ; i < nr_recvbuff ; ++i) {
   ssv6xxx_usb_recv_rx(glue, &(glue->ssv_rx_buf[i]));
@@ -620,8 +697,18 @@ static int ssv_usb_probe(struct usb_interface *interface,
  kref_init(&glue->kref);
  mutex_init(&glue->io_mutex);
  mutex_init(&glue->cmd_mutex);
-    ssv6xxx_init_queue(&glue->ssv_rx_queue);
-    tasklet_init(&glue->rx_tasklet, ssv6xxx_usb_recv_rx_tasklet, (unsigned long)glue);
+ tu_ssv6xxx_init_queue(&glue->ssv_rx_queue);
+ if (ssv_rx_use_wq) {
+  glue->rx_work.glue = glue;
+  INIT_WORK((struct work_struct *)&glue->rx_work, ssv6xxx_usb_recv_rx_work);
+  glue->wq = create_singlethread_workqueue("ssv6xxx_usb_wq");
+  if (!glue->wq) {
+   dev_err(&interface->dev, "Could not allocate Work Queue\n");
+   goto error;
+  }
+ } else {
+  tasklet_init(&glue->rx_tasklet, ssv6xxx_usb_recv_rx_tasklet, (unsigned long)glue);
+ }
  pwlan_data = &glue->tmp_data;
  memset(pwlan_data, 0, sizeof(struct ssv6xxx_platform_data));
  atomic_set(&pwlan_data->irq_handling, 0);
@@ -675,7 +762,7 @@ static int ssv_usb_probe(struct usb_interface *interface,
      goto error;
     }
     glue->ssv_rx_buf[j].glue = glue;
-    ssv6xxx_init_list_node((struct ssv6xxx_list_node *)&glue->ssv_rx_buf[j]);
+    tu_ssv6xxx_init_list_node((struct ssv6xxx_list_node *)&glue->ssv_rx_buf[j]);
    }
   }
  }
@@ -765,9 +852,14 @@ static int ssv_usb_suspend(struct usb_interface *interface, pm_message_t message
 static int ssv_usb_resume(struct usb_interface *interface)
 {
  struct ssv6xxx_usb_glue *glue = usb_get_intfdata(interface);
+ int i;
+ int nr_recvbuff = (ssv_rx_nr_recvbuff > MAX_NR_RECVBUFF)?MAX_NR_RECVBUFF:((ssv_rx_nr_recvbuff < MIN_NR_RECVBUFF)?MIN_NR_RECVBUFF:ssv_rx_nr_recvbuff);
  dev_info(glue->dev, "%s(): resume.\n", __FUNCTION__);
  if (!glue)
   return 0;
+ for (i = 0 ; i < nr_recvbuff ; ++i) {
+  ssv6xxx_usb_recv_rx(glue, &(glue->ssv_rx_buf[i]));
+ }
  glue->p_wlan_data->resume(glue->p_wlan_data->pm_param);
  return 0;
 }
@@ -822,11 +914,14 @@ static void __exit ssv6xxx_usb_exit(void)
 #endif
 {
  if (driver_for_each_device(&ssv_usb_driver.drvwrap.driver, NULL,
-  NULL, ssv_usb_do_device_exit));
- printk(KERN_INFO "ssv6xxx_usb_exit\n");
+  NULL, ssv_usb_do_device_exit)){};
+    printk(KERN_INFO "ssv6xxx_usb_exit\n");
  usb_deregister(&ssv_usb_driver);
 }
-#if (!defined(CONFIG_SSV_SUPPORT_ANDROID) && !defined(CONFIG_SSV_BUILD_AS_ONE_KO))
+#if (defined(CONFIG_SSV_SUPPORT_ANDROID)||defined(CONFIG_SSV_BUILD_AS_ONE_KO))
+EXPORT_SYMBOL(ssv6xxx_usb_init);
+EXPORT_SYMBOL(ssv6xxx_usb_exit);
+#else
 module_init(ssv6xxx_usb_init);
 module_exit(ssv6xxx_usb_exit);
 #endif

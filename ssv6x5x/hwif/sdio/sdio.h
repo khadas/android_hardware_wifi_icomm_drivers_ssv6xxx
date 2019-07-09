@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -16,6 +15,6 @@
 
 #ifndef _SDIO_H_
 #define _SDIO_H_ 
-int ssv6xxx_sdio_init(void);
-void ssv6xxx_sdio_exit(void);
+int tu_ssv6xxx_sdio_init(void);
+void tu_ssv6xxx_sdio_exit(void);
 #endif

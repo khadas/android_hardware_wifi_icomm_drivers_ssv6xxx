@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -40,7 +39,8 @@
 #define SSV_AMPDU_MAX_SSN (4096)
 #define SSV_AMPDU_BA_WINDOW_SIZE (64)
 #define SSV_AMPDU_WINDOW_SIZE (64)
-#define SSV_GET_MAX_AMPDU_SIZE(sh) (((sh)->tx_page_available/(sh)->ampdu_divider) << HW_MMU_PAGE_SHIFT)
+#define SSV_AMPDU_SIZE_1_2(sh) (((sh)->tx_page_available /2) << HW_MMU_PAGE_SHIFT)
+#define SSV_AMPDU_SIZE_3_7(sh) (((sh)->tx_page_available *3 /7) << HW_MMU_PAGE_SHIFT)
 #define SSV_AMPDU_FLOW_CONTROL_UPPER_BOUND (256)
 #define SSV_AMPDU_FLOW_CONTROL_LOWER_BOUND (48)
 #define SSV_AMPDU_timer_period (50)

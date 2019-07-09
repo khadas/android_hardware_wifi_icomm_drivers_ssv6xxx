@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -24,7 +23,7 @@
 #include "ssv_skb.h"
 #include <hal.h>
 extern struct ieee80211_ops ssv6200_ops;
-#define BA_WAIT_TIMEOUT (800)
+#define BA_WAIT_TIMEOUT (100)
 #define AMPDU_TID_TO_SC(ampdu_tid) \
     ({ \
     struct AMPDU_TID_st *_ampdu_tid = (ampdu_tid); \
@@ -47,13 +46,15 @@ extern struct ieee80211_ops ssv6200_ops;
         sn = NEXT_PKT_SN(sn); \
         sn; \
     })
+#ifdef CONFIG_SSV6XXX_DEBUGFS
 static ssize_t ampdu_tx_mib_dump (struct ssv_sta_priv_data *ssv_sta_priv,
                                   char *mib_str, ssize_t length);
+static int _dump_ba_skb (struct ssv_softc *sc, char *buf, int buf_size, struct sk_buff *ba_skb);
+#endif
 static struct sk_buff* _aggr_retry_mpdu (struct ssv_softc *sc,
                                          struct AMPDU_TID_st *cur_AMPDU_TID,
                                          struct sk_buff_head *retry_queue,
                                          u32 max_aggr_len);
-static int _dump_ba_skb (struct ssv_softc *sc, char *buf, int buf_size, struct sk_buff *ba_skb);
 int ssv6200_dump_BA_notification (char *buf,
                                   struct ampdu_ba_notify_data *ba_notification);
 static struct sk_buff *_alloc_ampdu_skb (struct ssv_softc *sc,
@@ -127,6 +128,8 @@ static bool ssv6200_ampdu_add_delimiter_and_crc32 (struct sk_buff *mpdu)
     int ret;
     u32 orig_mpdu_len = mpdu->len;
     u32 pad = (4 - (orig_mpdu_len % 4)) % 4;
+    struct ieee80211_tx_info *info = IEEE80211_SKB_CB(mpdu);
+    struct ssv_vif_priv_data *vif_priv = (struct ssv_vif_priv_data *)info->control.vif->drv_priv;
     mpdu_hdr = (struct ieee80211_hdr*) (mpdu->data);
     mpdu_hdr->duration_id = AMPDU_TX_NAV_MCS_567;
     ret = skb_padto(mpdu, mpdu->len + (AMPDU_FCS_LEN + pad));
@@ -140,10 +143,21 @@ static bool ssv6200_ampdu_add_delimiter_and_crc32 (struct sk_buff *mpdu)
     delimiter_p = (p_AMPDU_DELIMITER) mpdu->data;
     delimiter_p->reserved = 0;
     delimiter_p->length = orig_mpdu_len + AMPDU_FCS_LEN;
+    if (vif_priv->pair_cipher == SSV_CIPHER_CCMP) {
+        delimiter_p->length += CCMP_MIC_LEN;
+    }
     delimiter_p->signature = AMPDU_SIGNATURE;
     delimiter_p->crc = _cal_ampdu_delm_crc((u8*) (delimiter_p));
     return true;
 }
+const u16 ampdu_max_transmit_length[RATE_TABLE_SIZE] =
+{
+    0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    4429, 8860, 13291, 17723, 26586, 35448, 39880, 44311,
+    4921, 9844, 14768, 19692, 29539, 39387, 44311, 49234,
+    4429, 8860, 13291, 17723, 26586, 35448, 39880, 44311
+};
 int ssv6200_get_ampdu_max_transmit_length(int rate_idx)
 {
  return ampdu_max_transmit_length[rate_idx];
@@ -153,7 +167,7 @@ static void ssv6200_ampdu_hw_init (struct ieee80211_hw *hw)
     struct ssv_softc *sc = hw->priv;
     SSV_AMPDU_AUTO_CRC_EN(sc->sh);
 }
-bool _sync_ampdu_pkt_arr (struct ssv_softc*sc, struct AMPDU_TID_st *ampdu_tid
+bool _sync_ampdu_pkt_arr (struct ssv_softc *sc, struct AMPDU_TID_st *ampdu_tid
     , struct sk_buff *ampdu, bool retry)
 {
     struct sk_buff **pp_aggr_pkt;
@@ -260,6 +274,8 @@ struct sk_buff* _aggr_retry_mpdu (struct ssv_softc *sc,
     unsigned long flags;
     struct ampdu_hdr_st *ampdu_hdr;
  u16 head_ssn = ampdu_tid->ssv_baw_head;
+    struct ieee80211_tx_info *info;
+    struct ssv_vif_priv_data *vif_priv;
 #if 0
     if (cur_AMPDU_TID->ssv_baw_head == SSV_ILLEGAL_SN)
     {
@@ -287,7 +303,12 @@ struct sk_buff* _aggr_retry_mpdu (struct ssv_softc *sc,
         {
             break;
         }
+        info = IEEE80211_SKB_CB(retry_mpdu);
+        vif_priv = (struct ssv_vif_priv_data *)info->control.vif->drv_priv;
         new_total_skb_size = total_skb_size + retry_mpdu->len;
+        if (vif_priv->pair_cipher == SSV_CIPHER_CCMP) {
+            new_total_skb_size += CCMP_MIC_LEN;
+        }
         if (new_total_skb_size > ampdu_hdr->max_size)
             break;
         total_skb_size = new_total_skb_size;
@@ -427,7 +448,7 @@ static void ssv6200_ampdu_change_retry_frame_rate(struct sk_buff_head *ampdu_skb
     struct ieee80211_tx_info *info;
  struct ieee80211_tx_rate *ar;
     int i;
-    skb = __skb_dequeue(ampdu_skb_retry_queue_p);
+    skb = skb_dequeue(ampdu_skb_retry_queue_p);
     info = IEEE80211_SKB_CB(skb);
     for (i = 0; i < 3; i++) {
      ar = &info->control.rates[i];
@@ -445,14 +466,17 @@ static void ssv6200_ampdu_send_retry (
         struct sk_buff_head *ampdu_skb_retry_queue_p, bool send_aggr_tx)
 {
     struct ssv_softc *sc = hw->priv;
-    struct sk_buff *ampdu_retry_skb;
+    struct sk_buff *ampdu_retry_skb, *retry_mpdu;
     u32 ampdu_skb_retry_queue_len;
     u32 max_agg_len;
     u16 lowest_rate;
     struct fw_rc_retry_params rates[SSV62XX_TX_MAX_RATES];
+    SKB_info *mpdu_skb_info;
+    unsigned long flags;
     ampdu_skb_retry_queue_len = skb_queue_len(ampdu_skb_retry_queue_p);
     if (ampdu_skb_retry_queue_len == 0)
         return;
+    spin_lock_irqsave(&ampdu_skb_retry_queue_p->lock, flags);
     ampdu_retry_skb = skb_peek(ampdu_skb_retry_queue_p);
     lowest_rate = SSV_HT_RATE_UPDATE(sc, ampdu_retry_skb, rates);
     max_agg_len = SSV_AMPDU_MAX_TRANSMIT_LENGTH(sc, ampdu_retry_skb, lowest_rate);
@@ -461,17 +485,21 @@ static void ssv6200_ampdu_send_retry (
         ampdu_retry_skb = skb_peek(ampdu_skb_retry_queue_p);
         max_agg_len = SSV_AMPDU_MAX_TRANSMIT_LENGTH(sc, ampdu_retry_skb, 15);
     }
+    spin_unlock_irqrestore(&ampdu_skb_retry_queue_p->lock, flags);
     if (max_agg_len > 0)
     {
-        u32 cur_ampdu_max_size = SSV_GET_MAX_AMPDU_SIZE(sc->sh);
+        struct ssv_sta_priv_data *ssv_sta_priv = (struct ssv_sta_priv_data *)cur_ampdu_tid->sta->drv_priv;
+        u32 cur_ampdu_max_size = ssv_sta_priv->max_ampdu_size;
         if (max_agg_len >= cur_ampdu_max_size)
             max_agg_len = cur_ampdu_max_size;
         while (ampdu_skb_retry_queue_len > 0)
         {
-            struct sk_buff *retry_mpdu = skb_peek(ampdu_skb_retry_queue_p);
-            SKB_info *mpdu_skb_info = (SKB_info *)(retry_mpdu->head);
+            spin_lock_irqsave(&ampdu_skb_retry_queue_p->lock, flags);
+            retry_mpdu = skb_peek(ampdu_skb_retry_queue_p);
+            mpdu_skb_info = (SKB_info *)(retry_mpdu->head);
             mpdu_skb_info->lowest_rate = lowest_rate;
             memcpy(mpdu_skb_info->rates, rates, sizeof(rates));
+            spin_unlock_irqrestore(&ampdu_skb_retry_queue_p->lock, flags);
             ampdu_retry_skb = _aggr_retry_mpdu(sc, cur_ampdu_tid, ampdu_skb_retry_queue_p,
                                                max_agg_len);
             if (ampdu_retry_skb != NULL)
@@ -869,15 +897,23 @@ void ssv6200_ampdu_tx_operation (u16 tid, struct ieee80211_sta *sta,
 static void _clear_mpdu_q (struct ieee80211_hw *hw, struct sk_buff_head *q,
                            bool aggregated_mpdu)
 {
+    struct ssv_softc *sc = hw->priv;
     struct sk_buff *skb;
+    struct SKB_info_st *mpdu_skb_info_p = NULL;
     while (1)
     {
         skb = skb_dequeue(q);
         if (!skb)
             break;
+        mpdu_skb_info_p = (SKB_info *) (skb->head);
         if (aggregated_mpdu)
             skb_pull(skb, AMPDU_DELIMITER_LEN);
-        ieee80211_tx_status(hw, skb);
+        if (mpdu_skb_info_p->directly_ack)
+            dev_kfree_skb_any(skb);
+        else {
+            ieee80211_tx_status(hw, skb);
+  }
+        atomic_dec(&sc->ampdu_tx_frame);
     }
 }
 void ssv6200_ampdu_tx_stop (u16 tid, struct ieee80211_sta *sta,
@@ -885,6 +921,11 @@ void ssv6200_ampdu_tx_stop (u16 tid, struct ieee80211_sta *sta,
 {
     struct ssv_softc *sc = hw->priv;
     struct ssv_sta_priv_data *ssv_sta_priv;
+    struct sk_buff *ampdu_skb;
+    struct ampdu_hdr_st *ampdu_hdr;
+    struct SKB_info_st *skb_info;
+    int i = 0;
+    bool collect_ba_window_frame = false;
     ssv_sta_priv = (struct ssv_sta_priv_data *) sta->drv_priv;
     if (ssv_sta_priv->ampdu_tid[tid].state == AMPDU_STATE_STOP)
         return;
@@ -915,6 +956,21 @@ void ssv6200_ampdu_tx_stop (u16 tid, struct ieee80211_sta *sta,
 #endif
         list_del_rcu(&ssv_sta_priv->ampdu_tid[tid].list);
     }
+    for (i = 0; i < SSV_AMPDU_BA_WINDOW_SIZE; i++) {
+        struct sk_buff *skb = ssv_sta_priv->ampdu_tid[tid].aggr_pkts[i];
+        if (skb != NULL) {
+            skb_info = (struct SKB_info_st *) (skb->head);
+            skb_info->mpdu_retry_counter = SSV_AMPDU_retry_counter_max;
+            if(skb_info->ampdu_tx_status != AMPDU_ST_RETRY_Q){
+            	skb_info->ampdu_tx_status = AMPDU_ST_DROPPED;
+			}
+            collect_ba_window_frame = true;
+        }
+    }
+    if (collect_ba_window_frame) {
+        printk("collect ba sindow frame to release queue\n");
+        ssv6xxx_release_frames(&ssv_sta_priv->ampdu_tid[tid]);
+    }
     printk("clear tx q len=%d\n",
            skb_queue_len(&ssv_sta_priv->ampdu_tid[tid].ampdu_skb_tx_queue));
     _clear_mpdu_q(sc->hw, &ssv_sta_priv->ampdu_tid[tid].ampdu_skb_tx_queue,
@@ -926,6 +982,17 @@ void ssv6200_ampdu_tx_stop (u16 tid, struct ieee80211_sta *sta,
     printk("clear encrypt q len=%d\n",skb_queue_len(&ssv_sta_priv->ampdu_tid[tid].ampdu_skb_wait_encry_queue));
     _clear_mpdu_q(sc->hw, &ssv_sta_priv->ampdu_tid[tid].ampdu_skb_wait_encry_queue, false);
 #endif
+    printk("clear release q len=%d\n",
+           skb_queue_len(&ssv_sta_priv->ampdu_tid[tid].release_queue));
+    _clear_mpdu_q(sc->hw, &ssv_sta_priv->ampdu_tid[tid].release_queue, true);
+    printk("clear early aggr ampdu q len=%d\n",
+           skb_queue_len(&ssv_sta_priv->ampdu_tid[tid].early_aggr_ampdu_q));
+    while (skb_queue_len(&ssv_sta_priv->ampdu_tid[tid].early_aggr_ampdu_q)) {
+        ampdu_skb = skb_dequeue(&ssv_sta_priv->ampdu_tid[tid].early_aggr_ampdu_q);
+        ampdu_hdr = (struct ampdu_hdr_st *) ampdu_skb->head;
+        _clear_mpdu_q(sc->hw, &ampdu_hdr->mpdu_q, true);
+     ssv6200_ampdu_release_skb(ampdu_skb, sc->hw);
+    }
 #ifdef ENABLE_AGGREGATE_IN_TIME
     if (ssv_sta_priv->ampdu_tid[tid].cur_ampdu_pkt != NULL)
     {
@@ -1092,9 +1159,14 @@ void _put_mpdu_to_ampdu (struct ssv_softc *sc, struct sk_buff *ampdu, struct sk_
     bool is_empty_ampdu = (ampdu->len == 0);
     unsigned char *data_dest;
     struct ampdu_hdr_st *ampdu_hdr = (struct ampdu_hdr_st *) ampdu->head;
+    struct ieee80211_tx_info *info = IEEE80211_SKB_CB(mpdu);
+    struct ssv_vif_priv_data *vif_priv = (struct ssv_vif_priv_data *)info->control.vif->drv_priv;
     BUG_ON(skb_tailroom(ampdu) < mpdu->len);
     data_dest = skb_tail_pointer(ampdu);
     skb_put(ampdu, mpdu->len);
+    if (vif_priv->pair_cipher == SSV_CIPHER_CCMP) {
+       skb_put(ampdu, CCMP_MIC_LEN);
+    }
     if (is_empty_ampdu)
     {
         struct ieee80211_tx_info *ampdu_info = IEEE80211_SKB_CB(ampdu);
@@ -1114,6 +1186,9 @@ void _put_mpdu_to_ampdu (struct ssv_softc *sc, struct sk_buff *ampdu, struct sk_
     __skb_queue_tail(&ampdu_hdr->mpdu_q, mpdu);
     ampdu_hdr->ssn[ampdu_hdr->mpdu_num++] = ampdu_skb_ssn(mpdu);
     ampdu_hdr->size += mpdu->len;
+    if (vif_priv->pair_cipher == SSV_CIPHER_CCMP) {
+       ampdu_hdr->size += CCMP_MIC_LEN;
+    }
     BUG_ON(ampdu_hdr->size > ampdu_hdr->max_size);
 }
 u32 _flush_early_ampdu_q (struct ssv_softc *sc, struct AMPDU_TID_st *ampdu_tid)
@@ -1171,6 +1246,8 @@ void _aggr_ampdu_tx_q (struct ieee80211_hw *hw, struct AMPDU_TID_st *ampdu_tid)
 {
     struct ssv_softc *sc = hw->priv;
     struct sk_buff *ampdu_skb = ampdu_tid->cur_ampdu_pkt;
+    struct ieee80211_tx_info *info;
+    struct ssv_vif_priv_data *vif_priv;
     while (skb_queue_len(&ampdu_tid->ampdu_skb_tx_queue))
     {
         u32 aggr_len;
@@ -1190,6 +1267,7 @@ void _aggr_ampdu_tx_q (struct ieee80211_hw *hw, struct AMPDU_TID_st *ampdu_tid)
         {
             struct sk_buff_head *tx_q = &ampdu_tid->ampdu_skb_tx_queue;
             unsigned long flags;
+            u32 new_total_skb_size;
             spin_lock_irqsave(&tx_q->lock, flags);
             mpdu_skb = skb_peek(&ampdu_tid->ampdu_skb_tx_queue);
             if (mpdu_skb == NULL)
@@ -1197,7 +1275,13 @@ void _aggr_ampdu_tx_q (struct ieee80211_hw *hw, struct AMPDU_TID_st *ampdu_tid)
                 spin_unlock_irqrestore(&tx_q->lock, flags);
                 break;
             }
-            if ((mpdu_skb->len + ampdu_hdr->size) > ampdu_hdr->max_size)
+            info = IEEE80211_SKB_CB(mpdu_skb);
+            vif_priv = (struct ssv_vif_priv_data *)info->control.vif->drv_priv;
+            new_total_skb_size = mpdu_skb->len + ampdu_hdr->size;
+            if (vif_priv->pair_cipher == SSV_CIPHER_CCMP) {
+                new_total_skb_size += CCMP_MIC_LEN;
+            }
+            if ( new_total_skb_size > ampdu_hdr->max_size)
             {
                 is_aggr_full = true;
                 spin_unlock_irqrestore(&tx_q->lock, flags);
@@ -1357,7 +1441,7 @@ bool ssv6200_ampdu_tx_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
     mpdu_skb_info_p->ampdu_tx_final_retry_count = 0;
     mpdu_skb_info_p->directly_ack = false;
     ssv_sta_priv->ampdu_tid[tidno].ac = skb_get_queue_mapping(skb);
-    ampdu_tx_frame = atomic_add_return(1, &sc->ampdu_tx_frame);
+    ampdu_tx_frame = atomic_read(&sc->ampdu_tx_frame);
     if ((sc->force_disable_directly_ack_tx != true) &&
         (sc->sc_flags & SC_OP_DIRECTLY_ACK) &&
         (ampdu_tx_frame < sc->directly_ack_high_threshold)) {
@@ -1385,6 +1469,7 @@ bool ssv6200_ampdu_tx_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
             return false;
         }
         skb_queue_tail(&ssv_sta_priv->ampdu_tid[tidno].ampdu_skb_tx_queue, skb);
+        atomic_inc(&sc->ampdu_tx_frame);
         ssv_sta_priv->ampdu_tid[tidno].timestamp = jiffies;
     }
     _aggr_ampdu_tx_q(hw, &ssv_sta_priv->ampdu_tid[tidno]);
@@ -1573,7 +1658,7 @@ void ssv6xxx_release_frames (struct AMPDU_TID_st *ampdu_tid)
                 int i;
                 char sn_str[66 * 5] = "";
                 char *str = sn_str;
-                for (i = 0; i < 64; i++)
+                for (i = 0; i < SSV_AMPDU_BA_WINDOW_SIZE; i++)
                     if (ampdu_tid->aggr_pkts[i] != NULL)
                     {
                         str += sprintf(str, "%d ",
@@ -1701,6 +1786,9 @@ static int _collect_retry_frames (struct AMPDU_TID_st *ampdu_tid)
 }
 void ssv6xxx_mark_skb_retry (struct ssv_softc *sc, struct SKB_info_st *skb_info, struct sk_buff *skb)
 {
+    struct SKB_info_st *mpdu_skb_info_p = (SKB_info *) (skb->head);
+    struct ieee80211_sta *sta = mpdu_skb_info_p->sta;
+    struct ssv_sta_priv_data *ssv_sta_priv = (struct ssv_sta_priv_data *) sta->drv_priv;
     if (skb_info->ampdu_tx_status == AMPDU_ST_SENT){
         if (skb_info->mpdu_retry_counter == 0)
         {
@@ -1708,6 +1796,7 @@ void ssv6xxx_mark_skb_retry (struct ssv_softc *sc, struct SKB_info_st *skb_info,
             skb_hdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_RETRY);
         }
         skb_info->ampdu_tx_status = AMPDU_ST_RETRY;
+        ssv_sta_priv->retry_samples[skb_info->mpdu_retry_counter]++;
         skb_info->mpdu_retry_counter++;
         if (skb_info->mpdu_retry_counter >= SSV_AMPDU_retry_counter_max){
             skb_info->ampdu_tx_status = AMPDU_ST_DROPPED;
@@ -1920,6 +2009,13 @@ void ssv6200_ampdu_no_BA_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
         return;
     }
     ssv_sta_priv = (struct ssv_sta_priv_data *) sta->drv_priv;
+    down_read(&sc->sta_info_sem);
+    if ((ssv_sta_priv->sta_info->s_flags & STA_FLAG_VALID) == 0) {
+        up_read(&sc->sta_info_sem);
+        prn_aggr_err(sc, "%s(): sta_info is gone.\n", __func__);
+        dev_kfree_skb_any(skb);
+        return;
+    }
     ssv6200_dump_BA_notification(seq_str, ba_notification);
     ssv6xxx_find_txpktrun_no_from_ssn(sc, ba_notification->seq_no[0], ssv_sta_priv);
     prn_aggr_err(sc,
@@ -1928,6 +2024,7 @@ void ssv6200_ampdu_no_BA_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
     ampdu_tid = &ssv_sta_priv->ampdu_tid[tidno];
     if (ampdu_tid->state != AMPDU_STATE_OPERATION)
     {
+        up_read(&sc->sta_info_sem);
         dev_kfree_skb_any(skb);
         return;
     }
@@ -1958,6 +2055,7 @@ void ssv6200_ampdu_no_BA_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
                     skb_hdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_RETRY);
                 }
                 skb_info->ampdu_tx_status = AMPDU_ST_RETRY;
+                ssv_sta_priv->retry_samples[skb_info->mpdu_retry_counter]++;
                 skb_info->mpdu_retry_counter++;
             }
             else
@@ -1984,6 +2082,7 @@ void ssv6200_ampdu_no_BA_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
     skb_queue_tail(&sc->rc_report_queue, skb);
     if (sc->rc_report_sechedule == 0)
         queue_work(sc->rc_report_workqueue, &sc->rc_report_work);
+    up_read(&sc->sta_info_sem);
 }
 #ifndef SSV_SUPPORT_HAL
 void ssv6200_ampdu_BA_handler (struct ieee80211_hw *hw, struct sk_buff *skb)
@@ -2186,6 +2285,7 @@ void ssv6xxx_set_ampdu_rx_del_work (struct work_struct *work)
     u8 addr[6] = { 0 };
     SSV_SET_RX_BA(sc->sh, false, addr, 0, 0, 0);
 }
+#ifdef CONFIG_SSV6XXX_DEBUGFS
 static void _reset_ampdu_mib (struct ssv_softc *sc, struct ssv_sta_info *sta_info, void *param)
 {
     struct ieee80211_sta *sta = sta_info->sta;
@@ -2210,7 +2310,14 @@ ssize_t ampdu_tx_mib_dump (struct ssv_sta_priv_data *ssv_sta_priv,
     ssize_t buf_size = length;
     ssize_t prt_size;
     int j;
-    struct ssv_sta_info *ssv_sta = ssv_sta_priv->sta_info;
+    struct ssv_softc *sc;
+    struct ssv_sta_info *ssv_sta = ssv_sta_priv->sta_info, *first_ssv_sta;
+    first_ssv_sta = ssv_sta - ssv_sta_priv->sta_idx;
+    sc = container_of(first_ssv_sta, struct ssv_softc, sta_info[0]);
+    down_read(&sc->sta_info_sem);
+    if ((ssv_sta->s_flags & STA_FLAG_VALID) == 0) {
+        goto mib_dump_exit;
+    }
     if (ssv_sta->sta == NULL)
     {
         prt_size = snprintf(mib_str, buf_size, "\n    NULL STA.\n");
@@ -2306,8 +2413,11 @@ ssize_t ampdu_tx_mib_dump (struct ssv_sta_priv_data *ssv_sta_priv,
         }
     }
 mib_dump_exit:
+    up_read(&sc->sta_info_sem);
     return (length - buf_size);
 }
+#endif
+#if 0
 static void _dump_ampdu_mib (struct ssv_softc *sc, struct ssv_sta_info *sta_info, void *param)
 {
     struct mib_dump_data *dump_data = (struct mib_dump_data *)param;
@@ -2347,12 +2457,14 @@ ssize_t ssv6xxx_ampdu_mib_dump (struct ieee80211_hw *hw, char *mib_str,
     ssv6xxx_foreach_sta(sc, _dump_ampdu_mib, &dump_data);
     return dump_data.prt_len;
 }
+#endif
 struct sk_buff *_alloc_ampdu_skb (struct ssv_softc *sc, struct AMPDU_TID_st *ampdu_tid, u32 len)
 {
     unsigned char *payload_addr;
     u32 headroom = sc->hw->extra_tx_headroom;
     u32 offset;
-    u32 cur_max_ampdu_size = SSV_GET_MAX_AMPDU_SIZE(sc->sh);
+    struct ssv_sta_priv_data *ssv_sta_priv = (struct ssv_sta_priv_data *)ampdu_tid->sta->drv_priv;
+    u32 cur_max_ampdu_size = ssv_sta_priv->max_ampdu_size;
     u32 extra_room = sc->sh->tx_desc_len * 2 + 48;
     u32 max_physical_len = (len && ((len + extra_room) < cur_max_ampdu_size))
                            ? (len + extra_room)

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -20,29 +19,40 @@
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #ifdef CONFIG_SSV_SUPPORT_ANDROID
-//#include <linux/wakelock.h>
+#include <linux/wakelock.h>
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
 #endif
 #endif
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #include "ampdu.h"
 #include "ssv_rc_common.h"
 #include "drv_comm.h"
 #include "sec.h"
 #include "p2p.h"
 #include <linux/kthread.h>
-#define CABRIO_DRVER_NAME "SSV WLAN driver"
+#define SSV_DRVER_NAME "TU SSV WLAN driver"
 #define RF_MODE_SHUTDOWN 0
 #define RF_MODE_STANDBY 1
 #define RF_MODE_TRX_EN 2
+#define MRX_MODE_PROMISCUOUS 0x2
+#define MRX_MODE_NORMAL 0x3
 #define CCI_CTL 0x1
 #define CCI_DBG 0x2
 #define CCI_P1 0x4
 #define CCI_P2 0x8
 #define CCI_SMART 0x10
+#define MAX_CCI_LEVEL 128
 #define GT_PWR_START_MASK 0xFF
 #define GT_ENABLE 0x100
+#define GT_DBG 0x200
+#define AUTOSGI_CTL 0x1
+#define AUTOSGI_DBG 0x2
+#define CCMP_MIC_LEN 8
 enum ssv_rx_flow{
     RX_DATA_FLOW,
     RX_MGMT_FLOW,
@@ -70,6 +80,7 @@ struct ssv_cmd_data{
  bool log_to_ram;
  struct ssv_dbg_log dbg_log;
  struct proc_dir_entry *proc_dev_entry;
+ atomic_t cli_count;
 };
 void dbgprint(struct ssv_cmd_data *cmd_data, u32 log_ctrl, u32 log_id, const char *fmt,...);
 void ssv6xxx_hci_dbgprint(void *argc, u32 log_id, const char *fmt,...);
@@ -97,6 +108,9 @@ void ssv6xxx_hci_dbgprint(void *argc, u32 log_id, const char *fmt,...);
 #else
 #define prn_aggr_err(fmt,...) 
 #endif
+#define SSV_TEMPERATURE_NORMAL 0
+#define SSV_TEMPERATURE_HIGH 1
+#define SSV_TEMPERATURE_LOW 2
 #define RX_HCI M_ENG_MACRX|(M_ENG_HWHCI<<4)
 #define RX_CIPHER_HCI M_ENG_MACRX|(M_ENG_ENCRYPT_SEC<<4)|(M_ENG_HWHCI<<8)
 #define RX_CPU_HCI M_ENG_MACRX|(M_ENG_CPU<<4)|(M_ENG_HWHCI<<8)
@@ -163,6 +177,7 @@ extern u16 generic_deci_tbl[];
 #define HOUSE_KEEPING_TIMEOUT 100
 #define MAX_RX_IDLE_INTERVAL 3
 #define HOUSE_KEEPING_1_SEC 10
+#define HOUSE_KEEPING_10_SEC 100
 #define WMM_AC_VO 0
 #define WMM_AC_VI 1
 #define WMM_AC_BE 2
@@ -180,6 +195,11 @@ extern u16 generic_deci_tbl[];
 #define IS_SSV_SHORT_PRE(dsc) ((dsc)->rate_idx>=4 && (dsc)->rate_idx<=14)
 #define RSSI_SMOOTHING_SHIFT 5
 #define RSSI_DECIMAL_POINT_SHIFT 6
+#define SSV_EDCA_SCALE 10
+#define SSV_EDCA_FRAC(_val,_div) (((_val) << SSV_EDCA_SCALE) / _div)
+#define SSV_EDCA_TRUNC(_val) ((_val) >> SSV_EDCA_SCALE)
+#define GET_PRIMARY_EDCA(_sc) SSV_EDCA_TRUNC(_sc->primary_edca_mib * 100)
+#define GET_SECONDARY_EDCA(_sc) SSV_EDCA_TRUNC(_sc->secondary_edca_mib * 100)
 #ifndef SSV_SUPPORT_HAL
 #include "ssv_reg_acc.h"
 #endif
@@ -322,6 +342,7 @@ struct ssv_hal_ops {
     void (*get_chip_id)(struct ssv_hw *sh);
     bool (*if_chk_mac2)(struct ssv_hw *sh);
     void (*save_hw_status)(struct ssv_softc *sc);
+    void (*pll_chk)(struct ssv_hw *sh);
     void (*init_gpio_cfg)(struct ssv_hw *sh);
     int (*get_wsid)(struct ssv_softc *sc, struct ieee80211_vif *vif,
         struct ieee80211_sta *sta);
@@ -373,10 +394,8 @@ struct ssv_hal_ops {
     void (*update_decision_table_6)(struct ssv_hw *sh, u32 val);
     int (*update_decision_table)(struct ssv_softc *sc);
     void (*get_fw_version)(struct ssv_hw *sh, u32 *regval);
-#ifdef CONFIG_SSV_SMARTLINK
-    void (*set_mrx_flt)(struct ssv_hw *sh, u32 regval);
-    void (*get_mrx_flt)(struct ssv_hw *sh, u32 *regval);
-#endif
+    void (*set_mrx_mode)(struct ssv_hw *sh, u32 regval);
+    void (*get_mrx_mode)(struct ssv_hw *sh, u32 *regval);
     void (*set_op_mode)(struct ssv_hw *sh, u32 opmode, int vif_idx);
     void (*set_halt_mngq_util_dtim)(struct ssv_hw *sh, bool val);
     void (*set_dur_burst_sifs_g)(struct ssv_hw *sh, u32 val);
@@ -394,7 +413,11 @@ struct ssv_hal_ops {
     void (*set_rx_ba)(struct ssv_hw *sh, bool on, u8 *ta,
         u16 tid, u16 ssn, u8 buf_size);
     u8 (*read_efuse)(struct ssv_hw *sh, u8 *pbuf);
+    void (*write_efuse)(struct ssv_hw *sh, u8 *data, u8 data_length);
     int (*chg_clk_src)(struct ssv_hw *sh);
+    int (*update_efuse_setting)(struct ssv_hw *sh);
+    void (*do_temperature_compensation)(struct ssv_hw *sh);
+    void (*update_product_hw_setting)(struct ssv_hw *sh);
     enum ssv6xxx_beacon_type (*beacon_get_valid_cfg)(struct ssv_hw *sh);
     void (*set_beacon_reg_lock)(struct ssv_hw *sh, bool val);
     void (*set_beacon_id_dtim)(struct ssv_softc *sc,
@@ -425,6 +448,8 @@ struct ssv_hal_ops {
     void (*cmd_txgen)(struct ssv_hw *sh);
     void (*cmd_rf)(struct ssv_hw *sh, int argc, char *argv[]);
     void (*update_rf_pwr)(struct ssv_softc *sc);
+    void (*cmd_efuse)(struct ssv_hw *sh, int argc, char *argv[]);
+    void (*cmd_spectrum)(struct ssv_hw *sh);
     void (*cmd_hwq_limit)(struct ssv_hw *sh, int argc, char *argv[]);
     void (*get_rd_id_adr)(u32 *id_base_address);
     int (*burst_read_reg)(struct ssv_hw *sh, u32 *addr, u32 *buf, u8 reg_amount);
@@ -445,6 +470,9 @@ struct ssv_hal_ops {
     int (*jump_to_rom)(struct ssv_softc *sc);
     void (*get_fw_name)(u8 *fw_name);
     void (*send_tx_poll_cmd)(struct ssv_hw *sh, u32 type);
+    void (*flash_read_all_map)(struct ssv_hw *sh);
+    void (*wait_usb_rom_ready)(struct ssv_hw *sh);
+    void (*detach_usb_hci)(struct ssv_hw *sh);
     void (*add_txinfo) (struct ssv_softc *sc, struct sk_buff *skb);
     void (*update_txinfo)(struct ssv_softc *sc, struct sk_buff *skb);
     void (*update_ampdu_txinfo)(struct ssv_softc *sc, struct sk_buff *ampdu_skb);
@@ -458,7 +486,7 @@ struct ssv_hal_ops {
     void (*txtput_set_desc)(struct ssv_hw *sh, struct sk_buff *skb );
     void (*fill_beacon_tx_desc)(struct ssv_softc *sc, struct sk_buff* beacon_skb);
     void (*fill_lpbk_tx_desc)(struct sk_buff *skb, int security, unsigned char rate);
-    int (*get_tkip_mmic_err)(struct sk_buff *skb );
+    int (*get_sec_decode_err)(struct sk_buff *skb, bool *mic_err, bool *decode_err);
     int (*get_rx_desc_size)(struct ssv_hw *sh);
     int (*get_rx_desc_length)(struct ssv_hw *sh);
     u32 (*get_rx_desc_wsid)(struct sk_buff *skb);
@@ -467,27 +495,28 @@ struct ssv_hal_ops {
     bool (*is_rx_aggr)(struct sk_buff *skb);
     u32 (*get_rx_desc_ctype)(struct sk_buff *skb);
     int (*get_rx_desc_hdr_offset)(struct sk_buff *skb);
+    int (*chk_lpbk_rx_rate_desc)(struct ssv_hw *sh, struct sk_buff *skb);
     void (*get_rx_desc_info)(struct sk_buff *skb, u32 *packet_len, u32 *ctype,
         u32 *_tx_pkt_run_no);
     bool (*nullfun_frame_filter)(struct sk_buff *skb);
     void (*set_phy_mode)(struct ssv_hw *sh, bool val);
     void (*phy_enable)(struct ssv_hw *sh, bool val);
  void (*edca_enable)(struct ssv_hw *sh, bool val);
- void (*edca_stat)(struct ssv_hw *sh, int *primary, int *secondary);
+ void (*edca_stat)(struct ssv_hw *sh);
     void (*reset_mib_phy)(struct ssv_hw *sh);
     void (*dump_mib_rx_phy)(struct ssv_hw *sh);
  void (*rc_algorithm)(struct ssv_softc *sc);
  void (*set_80211_hw_rate_config)(struct ssv_softc *sc);
  void (*rc_legacy_bitrate_to_rate_desc)(int bitrate, u8 *drate);
  void (*rc_rx_data_handler)(struct ssv_softc *sc, struct sk_buff *skb, u32 rate_index);
- void (*rate_report_handler)(struct ssv_softc *sc, struct sk_buff *skb);
+ void (*rate_report_handler)(struct ssv_softc *sc, struct sk_buff *skb, bool *no_ba_result);
  void (*rc_process_rate_report)(struct ssv_softc *sc, struct sk_buff *skb);
  void (*rc_update_basic_rate)(struct ssv_softc *sc, u32 basic_rates);
- s32 (*rc_ht_update_update)(struct sk_buff *skb, struct ssv_softc *sc, struct fw_rc_retry_params *ar);
+ s32 (*rc_ht_update_rate)(struct sk_buff *skb, struct ssv_softc *sc, struct fw_rc_retry_params *ar);
  bool (*rc_ht_sta_current_rate_is_cck)(struct ieee80211_sta *sta);
     void (*rc_mac80211_rate_idx)(struct ssv_softc *sc,
             int hw_rate_idx, struct ieee80211_rx_status *rxs);
-    void (*update_rssi)(struct ssv_softc *sc,
+    void (*update_rxstatus)(struct ssv_softc *sc,
             struct sk_buff *rx_skb, struct ieee80211_rx_status *rxs);
 #ifdef CONFIG_SSV_CCI_IMPROVEMENT
     void (*update_scan_cci_setting)(struct ssv_softc *sc);
@@ -501,7 +530,7 @@ struct ssv_hal_ops {
             u16 tid, u16 *ssn, u8 buf_size);
     void (*ampdu_ba_handler)(struct ieee80211_hw *hw, struct sk_buff *skb, u32 tx_pkt_run_no);
     bool (*is_legacy_rate)(struct ssv_softc *sc, struct sk_buff *skb);
-    int (*ampdu_max_transmit_length)(struct sk_buff *skb, int rate_idx);
+    int (*ampdu_max_transmit_length)(struct ssv_softc *sc, struct sk_buff *skb, int rate_idx);
     void (*load_phy_table)(ssv_cabrio_reg **phy_table);
     u32 (*get_phy_table_size)(struct ssv_hw *sh);
     void (*load_rf_table)(ssv_cabrio_reg **rf_table);
@@ -524,6 +553,7 @@ struct ssv_hal_ops {
     bool (*dump_phy_reg)(struct ssv_hw *sh);
     bool (*dump_rf_reg)(struct ssv_hw *sh);
     bool (*support_iqk_cmd)(struct ssv_hw *sh);
+    void (*set_on3_enable)(struct ssv_hw *sh, bool val);
 };
 #endif
 struct ssv6xxx_umac_ops {
@@ -545,9 +575,53 @@ struct ssv6006dpd{
 #define GREEN_PWR 1
 struct ssv6006_padpd{
     bool dpd_done[PADPDBAND];
+    bool dpd_disable[PADPDBAND];
     bool pwr_mode;
+    bool spur_patched;
     u8 current_band;
     struct ssv6006dpd val[PADPDBAND];
+    u8 bbscale[PADPDBAND];
+};
+struct ssv6006_cal_result{
+    bool cal_done;
+    bool cal_iq_done[PADPDBAND];
+    u32 rxdc_2g[21];
+    u8 rxrc_bw20;
+    u8 rxrc_bw40;
+    u8 txdc_i_2g;
+    u8 txdc_q_2g;
+    u32 rxdc_5g[21];
+    u8 rxiq_alpha[PADPDBAND];
+    u8 rxiq_theta[PADPDBAND];
+    u8 txdc_i_5g;
+    u8 txdc_q_5g;
+    u8 txiq_alpha[PADPDBAND];
+    u8 txiq_theta[PADPDBAND];
+};
+struct ssv_tempe_table {
+    u8 g_band_gain[7];
+    u8 a_band_gain[4];
+    u16 xtal_offset;
+};
+struct ssv_flash_config {
+    bool exist;
+    struct ssv_tempe_table rt_config;
+    struct ssv_tempe_table ht_config;
+    struct ssv_tempe_table lt_config;
+    u8 xtal_offset_tempe_state;
+    u8 xtal_offset_low_boundary;
+    u8 xtal_offset_high_boundary;
+    u8 band_gain_tempe_state;
+    u8 band_gain_low_boundary;
+    u8 band_gain_high_boundary;
+    int chan;
+    u16 dcdc;
+    u16 padpd;
+    u32 g_band_pa_bias0;
+    u32 g_band_pa_bias1;
+    u32 a_band_pa_bias0;
+    u32 a_band_pa_bias1;
+    u8 rate_delta[13];
 };
 struct ssv_hw {
     struct ssv_softc *sc;
@@ -558,6 +632,7 @@ struct ssv_hw {
 #ifdef SSV_SUPPORT_HAL
     struct ssv_hal_ops hal_ops;
 #endif
+    u32 efuse_bitmap;
     u32 tx_desc_len;
     u32 rx_desc_len;
     u32 rx_pinfo_pad;
@@ -574,6 +649,7 @@ struct ssv_hw {
 #endif
     u32 hw_pinfo;
     struct ssv6xxx_cfg cfg;
+    struct ssv_flash_config flash_config;
     u32 n_addresses;
     struct mac_address maddr[SSV6200_MAX_HW_MAC_ADDR];
     u8 ipd_channel_touch;
@@ -584,10 +660,12 @@ struct ssv_hw {
     int rx_burstread_cnt;
     u8 *page_count;
     struct list_head hw_cfg;
+    struct mutex hw_cfg_mutex;
     void (*write_hw_config_cb)(void *param, u32 addr, u32 value);
     void *write_hw_config_args;
     struct ssv6xxx_iqk_cfg iqk_cfg;
     u8 default_txgain[PADPDBAND];
+    struct ssv6006_cal_result cal;
 };
 struct ssv_tx {
     u16 seq_no;
@@ -631,7 +709,6 @@ struct ssv_sta_info {
     int hw_wsid;
     struct ieee80211_sta *sta;
     struct ieee80211_vif *vif;
-    bool sleeping;
     bool tim_set;
     #if 0
     struct ssv_crypto_ops *crypt;
@@ -680,6 +757,8 @@ struct ssv_sta_priv_data {
     struct aggr_ssn ampdu_ssn[MAX_CONCUR_AMPDU];
  void *rc_info;
     struct rx_stats rxstats;
+    u32 retry_samples[16];
+    u16 max_ampdu_size;
 };
 struct wep_hw_key {
     u8 keylen;
@@ -712,6 +791,12 @@ struct ssv_vif_priv_data {
 #define SC_OP_SHORT_PREAMBLE BIT(4)
 #define SC_OP_CTS_PROT BIT(5)
 #define SC_OP_DIRECTLY_ACK BIT(6)
+#define SC_OP_BLOCK_CNTL BIT(7)
+#define SC_OP_CHAN_FIXED BIT(8)
+#define IS_ALLOW_SCAN (sc->p2p_status)
+#define IS_NON_AP_MODE (sc->ap_vif == NULL)
+#define IS_NONE_STA_CONNECTED_IN_AP_MODE (list_empty(&((struct ssv_vif_priv_data *)sc->ap_vif->drv_priv)->sta_list))
+#define IS_MGMT_AND_BLOCK_CNTL(_sc,_hdr) ((sc->sc_flags & SC_OP_BLOCK_CNTL) && (ieee80211_is_mgmt(_hdr->frame_control)))
 struct ssv6xxx_beacon_info {
  u32 pubf_addr;
  u16 len;
@@ -816,6 +901,7 @@ struct ssv_softc {
  struct work_struct set_ampdu_rx_del_work;
     bool isAssoc;
     u16 channel_center_freq;
+    u8 p2p_status;
     bool bScanning;
     int ps_status;
     u16 ps_aid;
@@ -867,13 +953,15 @@ struct ssv_softc {
     struct ssv6xxx_umac_ops *umac;
     struct ssv6006_padpd dpd;
     u8 green_pwr;
-    u8 current_pwr[5];
+    u8 current_pwr;
+    u8 gt_channel;
+    u8 default_pwr;
+    bool gt_enabled;
     u8 tx_pkt_run_no;
     spinlock_t tx_pkt_run_no_lock;
     wait_queue_head_t fw_wait_q;
     u32 iq_cali_done;
-    bool rxq_in_process;
-    bool remove_sta_in_process;
+    struct rw_semaphore sta_info_sem;
 #ifdef CONFIG_SMARTLINK
     u32 ssv_smartlink_status;
     u32 ssv_usr_pid;
@@ -887,9 +975,10 @@ struct ssv_softc {
     u32 cci_current_gate;
     bool cci_set;
     bool cci_start;
-    u8 cci_counter;
-    u8 ack_counter;
+    bool cci_modified;
+    u8 cci_rx_unavailable_counter;
 #endif
+    u8 ack_counter;
     struct timer_list house_keeping;
     struct workqueue_struct *house_keeping_wq;
     struct work_struct rx_stuck_work;
@@ -903,12 +992,20 @@ struct ssv_softc {
     int lpbk_rx_pkt_cnt;
     int lpbk_err_cnt;
     struct work_struct tx_poll_work;
+#ifdef CONFIG_SSV_CCI_IMPROVEMENT
     struct work_struct cci_clean_work;
+    struct work_struct cci_set_work;
+#endif
+    struct work_struct set_txpwr_work;
+    bool thermal_monitor;
+    int thermal_monitor_counter;
+    struct work_struct thermal_monitor_work;
     u8 rf_rc;
     struct _ssv6xxx_txtput ssv_txtput;
     atomic_t ampdu_tx_frame;
     int directly_ack_low_threshold;
     int directly_ack_high_threshold;
+    bool rx_data_exist;
 };
 enum {
     IQ_CALI_RUNNING,
@@ -922,17 +1019,17 @@ int ssv6200_rx(struct sk_buff_head *rx_skb_q, void *args);
 #else
 int ssv6200_rx(struct sk_buff *rx_skb, void *args);
 #endif
+int ssv6200_is_rx_q_full(void *args);
 void ssv6xxx_post_tx_cb(struct sk_buff_head *skb_head, void *args);
 void ssv6xxx_pre_tx_cb(struct sk_buff *skb, void *args);
-#ifdef RATE_CONTROL_REALTIME_UPDATA
 void ssv6xxx_tx_rate_update(struct sk_buff *skb, void *args);
-#endif
 int ssv6200_tx_flow_control(void *dev, int hw_txqid, bool fc_en, int debug);
 void ssv6xxx_tx_q_empty_cb (u32 txq_no, void *);
 #ifndef SSV_SUPPORT_HAL
 int ssv6xxx_rf_disable(struct ssv_hw *sh);
 int ssv6xxx_rf_enable(struct ssv_hw *sh);
 int ssv6xxx_set_channel(struct ssv_softc *sc, struct ieee80211_channel *channel, enum nl80211_channel_type);
+int ssv6xxx_set_on3_enable(struct ssv_hw *sh, bool val);
 #define HAL_SET_CHANNEL(_sc,_ch,_type) ssv6xxx_set_channel(_sc, _ch, _type)
 #endif
 #ifdef CONFIG_SMARTLINK
@@ -947,6 +1044,9 @@ void ssv6xxx_rx_stuck_process(struct work_struct *work);
 void ssv6xxx_mib_edca_process(struct work_struct *work);
 void ssv6xxx_tx_poll_process(struct work_struct *work);
 void ssv6xxx_cci_clean_process(struct work_struct *work);
+void ssv6xxx_cci_set_process(struct work_struct *work);
+void ssv6xxx_set_txpwr_process(struct work_struct *work);
+void ssv6xxx_thermal_monitor_process(struct work_struct *work);
 #ifndef SSV_SUPPORT_HAL
 u32 ssv6xxx_pbuf_alloc(struct ssv_softc *sc, int size, int type);
 bool ssv6xxx_pbuf_free(struct ssv_softc *sc, u32 pbuf_addr);
@@ -1112,7 +1212,8 @@ ssize_t ssv6xxx_tx_queue_status_dump (struct ssv_softc *sc, char *status_buf,
 #define SSV_INIT_TX_CFG(_sh) HAL_INIT_TX_CFG(_sh)
 #define SSV_INIT_RX_CFG(_sh) HAL_INIT_RX_CFG(_sh)
 #define SSV_FREE_PBUF(_sc,_hw_buf_ptr) HAL_FREE_PBUF(_sc, _hw_buf_ptr)
-#define SSV_GET_TKIP_MMIC_ERR(_sh,_rx_skb) HAL_GET_TKIP_MMIC_ERR(_sh, rx_skb);
+#define SSV_GET_SEC_DECODE_ERR(_sh,_rx_skb,_mic_err,_decode_err) \
+            HAL_GET_SEC_DECODE_ERR(_sh, _rx_skb, _mic_err, _decode_err)
 #define SSV_GET_RX_DESC_INFO(_sh,_skb,_packet_len,_c_type,_tx_pkt_run_no) \
             HAL_GET_RX_DESC_INFO( _sh, _skb, _packet_len, _c_type, _tx_pkt_run_no)
 #define SSV_GET_RX_DESC_HDR_OFFSET(_sh,_skb) \
@@ -1123,7 +1224,8 @@ ssize_t ssv6xxx_tx_queue_status_dump (struct ssv_softc *sc, char *status_buf,
 #define SSV_RC_UPDATE_BASIC_RATE(_sc,_basic_rates) \
    HAL_RC_UPDATE_BASIC_RATE(_sc, _basic_rates)
 #define SSV_NULLFUN_FRAME_FILTER(_sh,_skb) HAL_NULLFUN_FRAME_FILTER(_sh, _skb)
-#define SSV_RATE_REPORT_HANDLER(_sc,_skb) HAL_RATE_REPORT_HANDLER(_sc, _skb)
+#define SSV_RATE_REPORT_HANDLER(_sc,_skb,_no_ba_result) \
+            HAL_RATE_REPORT_HANDLER(_sc, _skb, _no_ba_result)
 #define SSV_ADJ_CONFIG(_sh) HAL_ADJ_CONFIG(_sh)
 #define SSV_BEACON_LOSS_ENABLE(_sh) HAL_BEACON_LOSS_ENABLE(_sh)
 #define SSV_BEACON_LOSS_DISABLE(_sh) HAL_BEACON_LOSS_DISABLE(_sh)
@@ -1131,11 +1233,14 @@ ssize_t ssv6xxx_tx_queue_status_dump (struct ssv_softc *sc, char *status_buf,
    HAL_BEACON_LOSS_CONFIG(_sh, _beacon_int, _bssid)
 #define SSV_PHY_ENABLE(_sh,_val) HAL_PHY_ENABLE(_sh, _val)
 #define SSV_EDCA_ENABLE(_sh,_val) HAL_EDCA_ENABLE(_sh, _val)
-#define SSV_EDCA_STAT(_sh,_primary,_secondary) \
-   HAL_EDCA_STAT(_sh, _primary, _secondary)
+#define SSV_EDCA_STAT(_sh) HAL_EDCA_STAT(_sh)
 #define SSV_FILL_LPBK_TX_DESC(_sc,_skb,_sec,_rate) \
             HAL_FILL_LPBK_TX_DESC(_sc, _skb, _sec, _rate)
+#define SSV_CHK_LPBK_RX_RATE_DESC(_sh,_skb) HAL_CHK_LPBK_RX_RATE_DESC(_sh, _skb)
 #define SSV_SEND_TX_POLL_CMD(_sh,_type) HAL_SEND_TX_POLL_CMD(_sh, _type)
+#define SSV_UPDATE_EFUSE_SETTING(_sh) HAL_UPDATE_EFUSE_SETTING(_sh)
+#define SSV_DO_TEMPERATURE_COMPENSATION(_sh) HAL_DO_TEMPERATURE_COMPENSATION(_sh)
+#define SSV_PLL_CHK(_sh) HAL_PLL_CHK(_sh)
 #else
 int ssv6xxx_get_tx_desc_ctype(struct sk_buff *skb);
 int ssv6xxx_get_tx_desc_txq_idx(struct sk_buff *skb);
@@ -1145,15 +1250,19 @@ void ssv6xxx_set_80211_hw_rate_config(struct ssv_softc *sc);
 void ssv6xxx_phy_enable(struct ssv_hw *sh, bool enable);
 bool ssv6xxx_nullfun_frame_filter(struct ssv_hw *sh, struct sk_buff *skb);
 void ssv6xxx_reset_sysplf(struct ssv_hw *sh);
-void ssv6xxx_init_iqk(struct ssv_hw *sh);
+void tu_ssv6xxx_init_iqk(struct ssv_hw *sh);
 void ssv6xxx_save_hw_status(struct ssv_softc *sc);
 u64 ssv6xxx_get_ic_time_tag(struct ssv_hw *sh);
 void ssv6xxx_edca_enable(struct ssv_hw *sh, bool val);
-void ssv6xxx_edca_stat(struct ssv_hw *sh, int *primary, int *secondary);
+void ssv6xxx_edca_stat(struct ssv_hw *sh);
 void ssv6xxx_send_tx_poll_cmd(struct ssv_hw *sh, u32 type);
 int ssv6xxx_set_rx_ctrl_flow(struct ssv_hw *sh);
 int ssv6xxx_get_rx_desc_hdr_offset(struct sk_buff *skb);
 void ssv6xxx_fill_lpbk_tx_desc(struct sk_buff *skb, int security, unsigned char rate);
+int ssv6xxx_chk_rx_rate_desc(struct ssv_hw *sh, struct sk_buff *skb);
+int ssv6xxx_update_efuse_setting(struct ssv_hw *sh);
+void ssv6xxx_do_temperature_compensation(struct ssv_hw *sh);
+void ssv6xxx_pll_chk(struct ssv_hw *sh);
 #ifdef CONFIG_PM
 void ssv6xxx_save_clear_trap_reason(struct ssv_softc *sc);
 void ssv6xxx_restore_trap_reason(struct ssv_softc *sc);
@@ -1161,7 +1270,7 @@ void ssv6xxx_pmu_awake(struct ssv_softc *sc);
 #endif
 #define SSV_UPDATE_PAGE_ID(_sh) 
 #define SSV_RESET_SYSPLF(_sh) ssv6xxx_reset_sysplf(_sh)
-#define SSV_INIT_IQK(_sh) ssv6xxx_init_iqk(_sh)
+#define SSV_INIT_IQK(_sh) tu_ssv6xxx_init_iqk(_sh)
 #define SSV_SAVE_HW_STATUS(_sc) ssv6xxx_save_hw_status(_sc)
 #define SSV_IF_CHK_MAC2(_sh) (true)
 #define SSV_RC_ALGORITHM(_sc) ssv6xxx_rc_algorithm(_sc)
@@ -1256,16 +1365,20 @@ void ssv6xxx_pmu_awake(struct ssv_softc *sc);
 #define SSV_PHY_ENABLE(_sh,_val) ssv6xxx_phy_enable(_sh, _val)
 #define SSV_NULLFUN_FRAME_FILTER(_sh,_skb) ssv6xxx_nullfun_frame_filter(_sh, _skb)
 #define SSV_EDCA_ENABLE(_sh,_val) ssv6xxx_edca_enable(_sh, _val)
-#define SSV_EDCA_STAT(_sh,_primary,_secondary) ssv6xxx_edca_stat(_sh, _primary, _secondary)
+#define SSV_EDCA_STAT(_sh) ssv6xxx_edca_stat(_sh)
 #define SSV_FILL_LPBK_TX_DESC(_sc,_skb,_sec,_rate) \
             ssv6xxx_fill_lpbk_tx_desc(_skb, _sec, _rate)
+#define SSV_CHK_LPBK_RX_RATE_DESC(_sh,_skb) ssv6xxx_chk_rx_rate_desc(_sh, _skb)
 #define SSV_SEND_TX_POLL_CMD(_sh,_type) ssv6xxx_send_tx_poll_cmd(_sh, _type)
-#define SSV_RATE_REPORT_HANDLER(_sc,_skb) 
+#define SSV_UPDATE_EFUSE_SETTING(_sh) ssv6xxx_update_efuse_setting(_sh)
+#define SSV_DO_TEMPERATURE_COMPENSATION(_sh) ssv6xxx_do_temperature_compensation(_sh)
+#define SSV_PLL_CHK(_sh) ssv6xxx_pll_chk(_sh)
+#define SSV_RATE_REPORT_HANDLER(_sc,_skb,_no_ba_result) 
 #define SSV_RC_LEGACY_BITRATE_TO_RATE_DESC(_sc,_bitrate,_drate) 
 #define SSV_BEACON_LOSS_ENABLE(_sh) 
 #define SSV_BEACON_LOSS_DISABLE(_sh) 
 #define SSV_BEACON_LOSS_CONFIG(_sh,_beacon_int,_bssid) 
-#define SSV_GET_TKIP_MMIC_ERR(_sh,_rx_skb) 0
+#define SSV_GET_SEC_DECODE_ERR(_sh,_rx_skb,_mic_err,_decode_err) 0
 #ifdef CONFIG_SSV_CABRIO_E
 #define SSV_SAVE_DEFAULT_IPD_CHCFG(_sh) ssv6xxx_save_default_ipd_chcfg( _sh)
 #else

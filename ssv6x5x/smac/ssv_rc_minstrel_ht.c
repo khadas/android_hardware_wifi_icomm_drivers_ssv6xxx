@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -26,6 +25,7 @@
 #include "ssv_rc_minstrel.h"
 #include "ssv_rc_minstrel_ht.h"
 #include <linux_80211.h>
+#include "ampdu.h"
 #define AVG_PKT_SIZE 1200
 #define SAMPLE_COLUMNS 10
 #define MCS_NBITS (AVG_PKT_SIZE << 3)
@@ -184,10 +184,10 @@ static void ssv_minstrel_ht_calc_retransmit(struct ssv_minstrel_priv *smp,
  } while ((tx_time < smp->segment_size) && (++mr->retry_count < smp->max_retry));
 }
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
-static void ssv_minstrel_ht_set_rate(struct ssv_minstrel_priv *smp, struct ssv_minstrel_ht_sta *mhs,
+static void ssv_minstrel_ht_set_rate(struct ssv_softc *sc, struct ssv_minstrel_priv *smp, struct ssv_minstrel_ht_sta *mhs,
    struct ieee80211_tx_rate *rate, int rate_series, int index, enum nl80211_band band, bool sample, bool rtscts)
 #else
-static void ssv_minstrel_ht_set_rate(struct ssv_minstrel_priv *smp, struct ssv_minstrel_ht_sta *mhs,
+static void ssv_minstrel_ht_set_rate(struct ssv_softc *sc, struct ssv_minstrel_priv *smp, struct ssv_minstrel_ht_sta *mhs,
    struct ieee80211_tx_rate *rate, int rate_series, int index, enum ieee80211_band band, bool sample, bool rtscts)
 #endif
 {
@@ -197,29 +197,32 @@ static void ssv_minstrel_ht_set_rate(struct ssv_minstrel_priv *smp, struct ssv_m
  if (!mr->retry_updated)
   ssv_minstrel_ht_calc_retransmit(smp, mhs, index);
  if (sample)
-  rate->count = 1;
+  rate->count = 2;
  else if (mr->probability < MINSTREL_FRAC(20, 100))
   rate->count = 2;
  else if (rtscts)
   rate->count = mr->retry_count_rtscts;
  else
-  rate->count = mr->retry_count;
+  rate->count = 4;
     rate->flags = 0;
  if (rtscts)
      rate->flags |= IEEE80211_TX_RC_USE_RTS_CTS;
     if (SSV_MINSTREL_STA_GROUP(index) != SSV_MINSTREL_CCK_GROUP) {
      rate->flags |= IEEE80211_TX_RC_MCS;
-     if (band == INDEX_80211_BAND_2GHZ) {
+        if (band == INDEX_80211_BAND_2GHZ) {
       if (group->flags & IEEE80211_TX_RC_40_MHZ_WIDTH) {
-       if ((rate_series == 0) && (mhs->secondary_channel_clear))
+       if (mhs->secondary_channel_clear)
         rate->flags |= IEEE80211_TX_RC_40_MHZ_WIDTH;
-      }
+   }
      } else {
       if (group->flags & IEEE80211_TX_RC_40_MHZ_WIDTH)
        rate->flags |= IEEE80211_TX_RC_40_MHZ_WIDTH;
      }
      rate->idx = index % MCS_GROUP_RATES;
-     if (((rate->idx == 7) || (rate->idx == 6)) && (group->flags & IEEE80211_TX_RC_SHORT_GI))
+        if (rate->idx == 0)
+         rate->flags &= ~IEEE80211_TX_RC_40_MHZ_WIDTH;
+     if (((rate->idx == 7) || (rate->idx == 6)) && (group->flags & IEEE80211_TX_RC_SHORT_GI) &&
+         ((mhs->sgi_state == SGI_ENABLE_SGI) || (mhs->sgi_state == SGI_DETECT_SGI)))
       rate->flags |= IEEE80211_TX_RC_SHORT_GI;
     } else {
      rate->idx = index % ARRAY_SIZE(smp->cck_rates);
@@ -235,8 +238,9 @@ static inline int ssv_minstrel_ht_get_duration(int index)
 static void ssv_minstrel_ht_next_sample_idx(struct ssv_minstrel_ht_sta *mhs)
 {
  struct ssv_minstrel_ht_mcs_group_data *mg;
-    int group = SSV_MINSTREL_STA_GROUP(mhs->max_tp_rate);
- for (;;) {
+ int group = SSV_MINSTREL_STA_GROUP(mhs->max_tp_rate);
+ int i;
+ for (i = 0 ; i < ARRAY_SIZE(ssv_minstrel_mcs_groups) ; ++i) {
   mhs->sample_group++;
   mhs->sample_group %= ARRAY_SIZE(ssv_minstrel_mcs_groups);
   mg = &mhs->groups[mhs->sample_group];
@@ -372,6 +376,8 @@ static void ssv_minstrel_ht_update_stats(struct ssv_softc *sc, struct ssv_minstr
  int cur_prob, cur_prob_tp, cur_tp, cur_tp2;
  int group, i, index, rate_idx;
  struct rc_setting *rc_setting = &sc->sh->cfg.rc_setting;
+    struct ssv_sta_priv_data *ssv_sta_priv = (struct ssv_sta_priv_data *)minstrel_sta_priv->sta->drv_priv;
+    int signal = -(ssv_sta_priv->beacon_rssi >> RSSI_DECIMAL_POINT_SHIFT);
  if (mhs->ampdu_packets > 0) {
   mhs->avg_ampdu_len = minstrel_ewma(mhs->avg_ampdu_len,
    MINSTREL_FRAC(mhs->ampdu_len, mhs->ampdu_packets), EWMA_LEVEL);
@@ -455,8 +461,9 @@ static void ssv_minstrel_ht_update_stats(struct ssv_softc *sc, struct ssv_minstr
    cur_tp2 = mr->cur_tp;
   }
  }
+#define SSV_HT_RC_CHANGE_CCK_RSSI_THRESHOLD (-70)
     group = SSV_MINSTREL_STA_GROUP(mhs->max_tp_rate);
-    if (mhs->cck_supported && (group != SSV_MINSTREL_CCK_GROUP)) {
+    if (mhs->cck_supported && (group != SSV_MINSTREL_CCK_GROUP) && (signal < SSV_HT_RC_CHANGE_CCK_RSSI_THRESHOLD)) {
         if ((0 == (GET_RATE_INDEX(mhs->max_tp_rate))) || (1 == (GET_RATE_INDEX(mhs->max_tp_rate)))) {
             mr = ssv_minstrel_ht_get_ratestats(mhs, mhs->max_tp_rate);
             if ((mr->probability < MINSTREL_FRAC(1, 4) )||
@@ -478,8 +485,14 @@ static void ssv_minstrel_ht_update_stats(struct ssv_softc *sc, struct ssv_minstr
             }
         }
     }
-    group = SSV_MINSTREL_STA_GROUP(mhs->max_tp_rate);
     mr = ssv_minstrel_ht_get_ratestats(mhs, mhs->max_tp_rate);
+    ssv_sta_priv->max_ampdu_size = SSV_AMPDU_SIZE_1_2(sc->sh);
+    if (mr->last_attempts > 0){
+        if (MINSTREL_FRAC(mr->last_success, mr->last_attempts)
+            < MINSTREL_FRAC( sc->sh->cfg.aggr_size_sel_pr, 100))
+            ssv_sta_priv->max_ampdu_size = SSV_AMPDU_SIZE_3_7(sc->sh);
+    }
+    group = SSV_MINSTREL_STA_GROUP(mhs->max_tp_rate);
     if (sc->sh->cfg.rc_log) {
         printk(" max_tp_rate after selection %d\n", mhs->max_tp_rate);
     }
@@ -497,6 +510,7 @@ static void ssv_minstrel_ht_update_stats(struct ssv_softc *sc, struct ssv_minstr
                 target_success = rc_setting->target_success;
             if (mr->probability < MINSTREL_FRAC(target_success, 100)){
                 mhs->max_tp_rate --;
+                rate_idx --;
                 if (mr->sample_skipped > 0 )
                     mr->probability = minstrel_ewma(mr->probability, 0, 80);
             }
@@ -504,10 +518,14 @@ static void ssv_minstrel_ht_update_stats(struct ssv_softc *sc, struct ssv_minstr
     } else {
         rate_idx = GET_CCK_RATE_INDEX(mhs->max_tp_rate);
         if (mr->probability < MINSTREL_FRAC(3, 10)){
-            if (rate_idx!=0)
+            if (rate_idx!=0) {
                mhs->max_tp_rate --;
-            if ((GET_RATE_INDEX(mhs->max_tp_rate) == 4) || (GET_RATE_INDEX(mhs->max_tp_rate) == 5))
+               rate_idx --;
+            }
+            if ((GET_RATE_INDEX(mhs->max_tp_rate) == 4) || (GET_RATE_INDEX(mhs->max_tp_rate) == 5)) {
                mhs->max_tp_rate -= 4;
+               rate_idx -= 4;
+            }
             if (mr->sample_skipped > 0 )
                mr->probability = minstrel_ewma(mr->probability, 0, 80);
         }
@@ -556,7 +574,8 @@ static void ssv_minstrel_ht_update_stats(struct ssv_softc *sc, struct ssv_minstr
 static void ssv_minstrel_ht_update_secondary_edcca_stats(struct ssv_softc *sc, struct ssv_minstrel_ht_sta *mhs)
 {
  int primary = 0, secondary = 0;
- SSV_EDCA_STAT(sc->sh, &primary, &secondary);
+ primary = GET_PRIMARY_EDCA(sc);
+ secondary = GET_SECONDARY_EDCA(sc);
  if ((sc->hw_chan_type == NL80211_CHAN_HT40MINUS) || (sc->hw_chan_type == NL80211_CHAN_HT40PLUS)) {
         if (secondary < 50)
       mhs->secondary_channel_clear = 1;
@@ -565,6 +584,53 @@ static void ssv_minstrel_ht_update_secondary_edcca_stats(struct ssv_softc *sc, s
     } else {
         mhs->secondary_channel_clear = 0;
     }
+}
+static void _check_sgi(struct ssv_softc *sc, struct ssv_minstrel_ht_sta *mhs, int ampdu_len, int ampdu_ack_len, int short_gi){
+ if (mhs->sgi_state == SGI_DETECT_MCS67){
+        if (mhs->sgi_state_count < 16) {
+         if (ampdu_len >= 4) {
+             mhs->sgi_state_count++ ;
+             mhs->sgi_state_total += ampdu_len;
+             mhs->sgi_state_success += ampdu_ack_len;
+         }
+         if (sc->sh->cfg.auto_sgi & AUTOSGI_DBG)
+             printk(" state: SGI_DETECT_MCS67 ampdu_size %d, ack_num %d total %d, success %d\n", ampdu_len,ampdu_ack_len
+                 , mhs->sgi_state_total, mhs->sgi_state_success);
+     } else {
+         if ((mhs->sgi_state_total-mhs->sgi_state_success) < (mhs->sgi_state_total >>2)) {
+             mhs->sgi_state = SGI_DETECT_SGI;
+             if (sc->sh->cfg.auto_sgi & AUTOSGI_DBG)
+                 printk("Change to state SGI_DETECT_SGI\n");
+         }
+         mhs->sgi_state_lgi_success = MINSTREL_FRAC(mhs->sgi_state_success, mhs->sgi_state_total);
+         mhs->sgi_state_count = 0;
+         mhs->sgi_state_total = 0;
+         mhs->sgi_state_success = 0;
+     }
+    } else if ((mhs->sgi_state == SGI_DETECT_SGI) && (short_gi!=0)){
+        if (mhs->sgi_state_count < 32) {
+         if (ampdu_len >= 4) {
+             mhs->sgi_state_count++ ;
+             mhs->sgi_state_total += ampdu_len;
+             mhs->sgi_state_success += ampdu_ack_len;
+         }
+         if (sc->sh->cfg.auto_sgi & AUTOSGI_DBG)
+             printk(" state SGI_DETECT_SGI:ampdu_size %d, ack_num %d count %d ,total %d, success %d\n",
+                 ampdu_len,ampdu_ack_len,mhs->sgi_state_count, mhs->sgi_state_total, mhs->sgi_state_success);
+     } else {
+         if (MINSTREL_FRAC(mhs->sgi_state_success, mhs->sgi_state_total) > (mhs->sgi_state_lgi_success*9/10)) {
+             mhs->sgi_state = SGI_ENABLE_SGI;
+             if (sc->sh->cfg.auto_sgi & AUTOSGI_DBG)
+                 printk("change state: SGI_ENABLE_SGI %d, threshold %d\n",
+                     MINSTREL_FRAC(mhs->sgi_state_success, mhs->sgi_state_total), (mhs->sgi_state_lgi_success*9/10));
+         } else {
+             mhs->sgi_state = SGI_FORBID_SGI;
+             if (sc->sh->cfg.auto_sgi & AUTOSGI_DBG)
+                 printk("change state: SGI_FORBID_SGI sgi %d, threshold %d\n",
+                     MINSTREL_FRAC(mhs->sgi_state_success, mhs->sgi_state_total), (mhs->sgi_state_lgi_success*9/10));
+         }
+     }
+ }
 }
 void ssv_minstrel_ht_tx_status(struct ssv_softc *sc, void *rc_info,
   struct ssv_minstrel_ht_rpt ht_rpt[], int ht_rpt_num,
@@ -598,9 +664,20 @@ void ssv_minstrel_ht_tx_status(struct ssv_softc *sc, void *rc_info,
   phy = ((ht_rpt[i].dword & 0xC0) >> 6);
   if (r_idx < 0)
    break;
-        if (phy == 0x3) {
+        if (phy == 0x3){
       group = mhs->group_idx;
       rate = &mhs->groups[group].rates[r_idx % 8];
+      if ((sc->sh->cfg.auto_sgi & AUTOSGI_CTL) && (!is_sample)) {
+          if (ampdu_len >= 4) {
+              if ((r_idx == 6) || (r_idx ==7)) {
+                  _check_sgi(sc, mhs, ampdu_len, ampdu_ack_len, short_gi);
+              } else {
+                     mhs->sgi_state_count = 0;
+                     mhs->sgi_state_total = 0;
+                     mhs->sgi_state_success = 0;
+              }
+          }
+      }
         } else {
             group = SSV_MINSTREL_CCK_GROUP;
             if (short_gi)
@@ -609,7 +686,14 @@ void ssv_minstrel_ht_tx_status(struct ssv_softc *sc, void *rc_info,
           rate = &mhs->groups[group].rates[r_idx % 4];
         }
   rate->success += ht_rpt[i].success * ampdu_ack_len;
-  rate->attempts += ht_rpt[i].count * ampdu_len;
+  if ( ht_rpt[i].success) {
+      rate->attempts += (ht_rpt[i].count-1) + ampdu_len;
+      mhs->hw_success_acc ++;
+            mhs->hw_retry_acc += (ht_rpt[i].count-1);
+  } else {
+      rate->attempts += ht_rpt[i].count;
+      mhs->hw_retry_acc += ht_rpt[i].count;
+     }
   if (sc->sh->cfg.rc_log) {
    printk("%s(), group[%d],rates[%d], success=%d, attempts=%d\n",
     __FUNCTION__, group, r_idx % 8, rate->success, rate->attempts);
@@ -649,21 +733,21 @@ void ssv_minstrel_ht_get_rate(void *priv, struct ieee80211_sta *sta, void *priv_
   sample_idx = ssv_minstrel_ht_get_sample_rate(sc, smp, mhs);
  if (sample_idx >= 0) {
   sample = true;
-  ssv_minstrel_ht_set_rate(smp, mhs, &ar[0], 0, sample_idx, sc->cur_channel->band, true, false);
+  ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[0], 0, sample_idx, sc->cur_channel->band, true, false);
   info->flags |= IEEE80211_TX_CTL_RATE_CTRL_PROBE;
  } else {
-  ssv_minstrel_ht_set_rate(smp, mhs, &ar[0], 0, mhs->max_tp_rate, sc->cur_channel->band, false, false);
+  ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[0], 0, mhs->max_tp_rate, sc->cur_channel->band, false, false);
  }
  if (smp->max_rates >= 3) {
   if (sample_idx >= 0)
-   ssv_minstrel_ht_set_rate(smp, mhs, &ar[1], 1, mhs->max_tp_rate, sc->cur_channel->band, false, false);
+   ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[1], 1, mhs->max_tp_rate, sc->cur_channel->band, false, false);
   else
-   ssv_minstrel_ht_set_rate(smp, mhs, &ar[1], 1, mhs->max_tp_rate2, sc->cur_channel->band, false, false);
-  ssv_minstrel_ht_set_rate(smp, mhs, &ar[2], 2, mhs->max_prob_rate, sc->cur_channel->band, false, true);
+   ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[1], 1, mhs->max_tp_rate2, sc->cur_channel->band, false, false);
+  ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[2], 2, mhs->max_prob_rate, sc->cur_channel->band, false, true);
   ar[3].count = 0;
   ar[3].idx = -1;
  } else if (smp->max_rates == 2) {
-  ssv_minstrel_ht_set_rate(smp, mhs, &ar[1], 1, mhs->max_prob_rate, sc->cur_channel->band, false, true);
+  ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[1], 1, mhs->max_prob_rate, sc->cur_channel->band, false, true);
   ar[2].count = 0;
   ar[2].idx = -1;
  } else {
@@ -721,6 +805,7 @@ void ssv_minstrel_ht_update_caps(void *priv, struct ieee80211_supported_band *sb
  u16 sta_cap = sta->ht_cap.cap;
  int ack_dur;
  int stbc;
+    bool is_sgi = false;
  sta_priv->is_ht = true;
  memset(mhs, 0, sizeof(*mhs));
  mhs->stats_update = jiffies;
@@ -743,17 +828,28 @@ void ssv_minstrel_ht_update_caps(void *priv, struct ieee80211_supported_band *sb
  if (oper_chan_type != NL80211_CHAN_HT40MINUS && oper_chan_type != NL80211_CHAN_HT40PLUS)
   sta_cap &= ~IEEE80211_HT_CAP_SUP_WIDTH_20_40;
  if (sta_cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) {
-  if (sta_cap & IEEE80211_HT_CAP_SGI_40)
+  if (sta_cap & IEEE80211_HT_CAP_SGI_40){
    mhs->group_idx = GROUP_IDX(1, 1, 1);
-  else
+   is_sgi = true;
+  }else
    mhs->group_idx = GROUP_IDX(1, 0, 1);
  } else {
-  if (sta_cap & IEEE80211_HT_CAP_SGI_20)
+  if (sta_cap & IEEE80211_HT_CAP_SGI_20){
    mhs->group_idx = GROUP_IDX(1, 1, 0);
-  else
+   is_sgi = true;
+  }else
    mhs->group_idx = GROUP_IDX(1, 0, 0);
  }
     ssv_minstrel_ht_update_cck(sc, smp, mhs, sband, sta);
+    if (sc->sh->cfg.auto_sgi & AUTOSGI_CTL){
+         if (is_sgi) {
+             mhs->sgi_state = SGI_DETECT_MCS67;
+         } else {
+             mhs->sgi_state = SGI_FORBID_SGI;
+         }
+    } else {
+        mhs->sgi_state = SGI_ENABLE_SGI;
+    }
  mhs->groups[mhs->group_idx].supported = mcs->rx_mask[ssv_minstrel_mcs_groups[mhs->group_idx].streams - 1];
     mhs->groups[mhs->group_idx].max_tp_rate = mhs->group_idx * MCS_GROUP_RATES;
 }
@@ -792,22 +888,22 @@ int ssv_minstrel_ht_update_rate(struct ssv_softc *sc, struct sk_buff *skb)
   sample_idx = ssv_minstrel_ht_get_sample_rate(sc, smp, mhs);
  if (sample_idx >= 0) {
   sample = true;
-  ssv_minstrel_ht_set_rate(smp, mhs, &ar[0], 0, sample_idx, sc->cur_channel->band, true, false);
+  ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[0], 0, sample_idx, sc->cur_channel->band, true, false);
   info->flags |= IEEE80211_TX_CTL_RATE_CTRL_PROBE;
  } else {
-  ssv_minstrel_ht_set_rate(smp, mhs, &ar[0], 0, mhs->max_tp_rate, sc->cur_channel->band, false, false);
+  ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[0], 0, mhs->max_tp_rate, sc->cur_channel->band, false, false);
  }
  if (smp->max_rates >= 3) {
   if (sample_idx >= 0)
-   ssv_minstrel_ht_set_rate(smp, mhs, &ar[1], 1, mhs->max_tp_rate, sc->cur_channel->band, false, false);
+   ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[1], 1, mhs->max_tp_rate, sc->cur_channel->band, false, false);
   else
-   ssv_minstrel_ht_set_rate(smp, mhs, &ar[1], 1, mhs->max_tp_rate2, sc->cur_channel->band, false, false);
-  ssv_minstrel_ht_set_rate(smp, mhs, &ar[2], 2, mhs->max_prob_rate, sc->cur_channel->band, false, true);
+   ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[1], 1, mhs->max_tp_rate2, sc->cur_channel->band, false, false);
+  ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[2], 2, mhs->max_prob_rate, sc->cur_channel->band, false, true);
   ar[3].count = 0;
   ar[3].idx = -1;
   lowest_rate = ar[2].idx;
  } else if (smp->max_rates == 2) {
-  ssv_minstrel_ht_set_rate(smp, mhs, &ar[1], 1, mhs->max_prob_rate, sc->cur_channel->band, false, true);
+  ssv_minstrel_ht_set_rate(sc, smp, mhs, &ar[1], 1, mhs->max_prob_rate, sc->cur_channel->band, false, true);
   ar[2].count = 0;
   ar[2].idx = -1;
   lowest_rate = ar[1].idx;

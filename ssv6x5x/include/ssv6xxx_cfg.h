@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -18,7 +17,11 @@
 #define _SSV6XXX_H_ 
 #include <linux/device.h>
 #include <linux/interrupt.h>
+#ifdef SSV_MAC80211
+#include "ssv_mac80211.h"
+#else
 #include <net/mac80211.h>
+#endif
 #ifdef ECLIPSE
 #include <ssv_mod_conf.h>
 #endif
@@ -96,5 +99,5 @@ struct txResourceControl {
     u32 edca2:5;
     u32 edca3:5;
 };
-#include <ssv_cfg.h>
+#include "ssv_cfg.h"
 #endif

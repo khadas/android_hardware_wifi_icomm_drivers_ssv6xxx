@@ -71,8 +71,13 @@ struct ssv6xxx_sdio_glue
 {
     struct device *dev;
     struct platform_device *core;
+#ifdef CONFIG_MMC_DISALLOW_STACK
+    u8 rreg_data[4];
+    u8 wreg_data[8];
+#else
 #ifdef CONFIG_FW_ALIGNMENT_CHECK
     struct sk_buff *dmaSkb;
+#endif
 #endif
 #ifdef CONFIG_PM
     struct sk_buff *cmd_skb;
@@ -89,7 +94,9 @@ static const struct sdio_device_id ssv6xxx_sdio_devices[] __devinitconst =
 static const struct sdio_device_id ssv6xxx_sdio_devices[] =
 #endif
 {
+#if 0
     { SDIO_DEVICE(SSV_VENDOR_ID, SSV_CABRIO_DEVID) },
+#endif
     {}
 };
 MODULE_DEVICE_TABLE(sdio, ssv6xxx_sdio_devices);
@@ -146,47 +153,67 @@ static int __must_check ssv6xxx_sdio_read_reg(struct device *child, u32 addr,
     int ret = (-1);
     struct ssv6xxx_sdio_glue *glue = dev_get_drvdata(child->parent);
     struct sdio_func *func ;
+#if !defined(CONFIG_MMC_DISALLOW_STACK)
     u8 data[4];
-    u8 *tmp = NULL;
-    tmp = kmalloc(1, GFP_KERNEL);
-    if (!tmp)
-         return ret;
-    memset(tmp, 0, 8);
-    if ( (wlan_data.is_enabled == false)
+#endif
+
+    if (   (wlan_data.is_enabled == false)
         || (glue == NULL)
-        || (glue->dev_ready == false)) {
-         kfree(tmp);
-         return ret;
-    }
+        || (glue->dev_ready == false))
+  return ret;
     if ( glue != NULL )
     {
         func = dev_to_sdio_func(glue->dev);
         sdio_claim_host(func);
+
+        // 4 bytes address
+#ifdef CONFIG_MMC_DISALLOW_STACK
+        glue->rreg_data[0] = (addr >> ( 0 )) &0xff;
+        glue->rreg_data[1] = (addr >> ( 8 )) &0xff;
+        glue->rreg_data[2] = (addr >> ( 16 )) &0xff;
+        glue->rreg_data[3] = (addr >> ( 24 )) &0xff;
+#else
         data[0] = (addr >> ( 0 )) &0xff;
         data[1] = (addr >> ( 8 )) &0xff;
         data[2] = (addr >> ( 16 )) &0xff;
         data[3] = (addr >> ( 24 )) &0xff;
-        memcpy(tmp, data, 4);
-        ret = sdio_memcpy_toio(func, glue->regIOPort, tmp, 4);
+#endif
+
+        //8 byte ( 4 bytes address , 4 bytes data )
+#ifdef CONFIG_MMC_DISALLOW_STACK
+        ret = sdio_memcpy_toio(func, glue->regIOPort, glue->rreg_data, 4);
+#else
+        ret = sdio_memcpy_toio(func, glue->regIOPort, data, 4);
+#endif
         if (WARN_ON(ret))
         {
             dev_err(child->parent, "sdio read reg write address failed (%d)\n", ret);
             goto io_err;
         }
-        ret = sdio_memcpy_fromio(func, tmp, glue->regIOPort, 4);
+
+#ifdef CONFIG_MMC_DISALLOW_STACK
+        ret = sdio_memcpy_fromio(func, glue->rreg_data, glue->regIOPort, 4);
+#else
+        ret = sdio_memcpy_fromio(func, data, glue->regIOPort, 4);
+#endif
         if (WARN_ON(ret))
         {
             dev_err(child->parent, "sdio read reg from I/O failed (%d)\n",ret);
          goto io_err;
       }
-        memset(data, 0, sizeof(data));
-        memcpy(data, tmp, 4);
         if(ret == 0)
         {
+#ifdef CONFIG_MMC_DISALLOW_STACK
+            *buf = (glue->rreg_data[0]&0xff);
+            *buf = *buf | ((glue->rreg_data[1]&0xff)<<( 8 ));
+            *buf = *buf | ((glue->rreg_data[2]&0xff)<<( 16 ));
+            *buf = *buf | ((glue->rreg_data[3]&0xff)<<( 24 ));
+#else
             *buf = (data[0]&0xff);
             *buf = *buf | ((data[1]&0xff)<<( 8 ));
             *buf = *buf | ((data[2]&0xff)<<( 16 ));
             *buf = *buf | ((data[3]&0xff)<<( 24 ));
+#endif
         }
         else
             *buf = 0xffffffff;
@@ -197,7 +224,6 @@ io_err:
     {
         dev_err(child->parent, "sdio read reg glue == NULL!!!\n");
     }
-    kfree(tmp);
     return ret;
 }
 #ifdef ENABLE_WAKE_IO_ISR_WHEN_HCI_ENQUEUE
@@ -221,35 +247,53 @@ static int __must_check ssv6xxx_sdio_write_reg(struct device *child, u32 addr,
     int ret = (-1);
     struct ssv6xxx_sdio_glue *glue = dev_get_drvdata(child->parent);
     struct sdio_func *func;
+#if !defined(CONFIG_MMC_DISALLOW_STACK)
     u8 data[8];
-    u8 *tmp = NULL;
-    tmp = kmalloc(1, GFP_KERNEL);
-    if (!tmp)
-         return ret;
-    memset(tmp, 0, 8);
-    if ( (wlan_data.is_enabled == false)
+#endif
+
+    if (   (wlan_data.is_enabled == false)
         || (glue == NULL)
-        || (glue->dev_ready == false)) {
-	   kfree(tmp);
-           return ret;
-    }
+        || (glue->dev_ready == false))
+  return ret;
     if ( glue != NULL )
     {
         func = dev_to_sdio_func(glue->dev);
         dev_dbg(child->parent, "sdio write reg addr 0x%x, 0x%x\n",addr, buf);
         sdio_claim_host(func);
+
+        // 4 bytes address
+#ifdef CONFIG_MMC_DISALLOW_STACK
+        glue->wreg_data[0] = (addr >> ( 0 )) &0xff;
+        glue->wreg_data[1] = (addr >> ( 8 )) &0xff;
+        glue->wreg_data[2] = (addr >> ( 16 )) &0xff;
+        glue->wreg_data[3] = (addr >> ( 24 )) &0xff;
+#else
         data[0] = (addr >> ( 0 )) &0xff;
         data[1] = (addr >> ( 8 )) &0xff;
         data[2] = (addr >> ( 16 )) &0xff;
         data[3] = (addr >> ( 24 )) &0xff;
+#endif
+
+        // 4 bytes data
+#ifdef CONFIG_MMC_DISALLOW_STACK
+        glue->wreg_data[4] = (buf >> ( 0 )) &0xff;
+        glue->wreg_data[5] = (buf >> ( 8 )) &0xff;
+        glue->wreg_data[6] = (buf >> ( 16 )) &0xff;
+        glue->wreg_data[7] = (buf >> ( 24 )) &0xff;
+#else
         data[4] = (buf >> ( 0 )) &0xff;
         data[5] = (buf >> ( 8 )) &0xff;
         data[6] = (buf >> ( 16 )) &0xff;
         data[7] = (buf >> ( 24 )) &0xff;
-	memcpy(tmp, data, 8);
-        ret = sdio_memcpy_toio(func, glue->regIOPort, tmp, 8);
-	memset(data, 0, sizeof(data));
-	memcpy(data, tmp, 8);
+#endif
+
+        //8 byte ( 4 bytes address , 4 bytes data )
+#ifdef CONFIG_MMC_DISALLOW_STACK
+        ret = sdio_memcpy_toio(func, glue->regIOPort, glue->wreg_data, 8);
+#else
+        ret = sdio_memcpy_toio(func, glue->regIOPort, data, 8);
+#endif
+
         sdio_release_host(func);
 #ifdef __x86_64
         udelay(50);
@@ -259,7 +303,6 @@ static int __must_check ssv6xxx_sdio_write_reg(struct device *child, u32 addr,
     {
         dev_err(child->parent, "sdio write reg glue == NULL!!!\n");
     }
-    kfree(tmp);
     return ret;
 }
 static int ssv6xxx_sdio_write_sram(struct device *child, u32 addr, u8 *data, u32 size)
@@ -646,10 +689,11 @@ static int ssv6xxx_sdio_load_firmware(struct device *child ,u8 *firmware_name, u
  struct ssv6xxx_sdio_glue *glue;
  struct sdio_func *func;
  glue = dev_get_drvdata(child->parent);
-    if(openfile)
+    if(openfile) {
         ret = ssv6xxx_sdio_load_firmware_openfile(child,firmware_name);
-    else
+    } else {
         ret = ssv6xxx_sdio_load_firmware_request(child,firmware_name);
+    }
  if(glue != NULL)
  {
   func = dev_to_sdio_func(glue->dev);
@@ -1211,10 +1255,10 @@ int ssv6xxx_get_dev_status(void)
 }
 EXPORT_SYMBOL(ssv6xxx_get_dev_status);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
-static int __devinit ssv6xxx_sdio_probe(struct sdio_func *func,
+int __devinit ssv6xxx_sdio_probe(struct sdio_func *func,
         const struct sdio_device_id *id)
 #else
-static int ssv6xxx_sdio_probe(struct sdio_func *func,
+int ssv6xxx_sdio_probe(struct sdio_func *func,
         const struct sdio_device_id *id)
 #endif
 {
@@ -1311,10 +1355,11 @@ out_free_glue:
 out:
     return ret;
 }
+EXPORT_SYMBOL(ssv6xxx_sdio_probe);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
-static void __devexit ssv6xxx_sdio_remove(struct sdio_func *func)
+void __devexit ssv6xxx_sdio_remove(struct sdio_func *func)
 #else
-static void ssv6xxx_sdio_remove(struct sdio_func *func)
+void ssv6xxx_sdio_remove(struct sdio_func *func)
 #endif
 {
     struct ssv6xxx_sdio_glue *glue = sdio_get_drvdata(func);
@@ -1351,6 +1396,7 @@ static void ssv6xxx_sdio_remove(struct sdio_func *func)
     sdio_set_drvdata(func, NULL);
     printk("ssv6xxx_sdio_remove leave..........\n");
 }
+EXPORT_SYMBOL(ssv6xxx_sdio_remove);
 #ifdef CONFIG_PM
 static int ssv6xxx_sdio_trigger_pmu(struct device *dev)
 {
@@ -1418,7 +1464,7 @@ static void ssv6xxx_sdio_reset(struct device *child)
 extern void sdio_reinit(void);
 extern void extern_wifi_set_enable(int is_on);
 #endif
-static int ssv6xxx_sdio_suspend(struct device *dev)
+int ssv6xxx_sdio_suspend(struct device *dev)
 {
     struct sdio_func *func = dev_to_sdio_func(dev);
      mmc_pm_flag_t flags = sdio_get_host_pm_caps(func);
@@ -1477,7 +1523,8 @@ static int ssv6xxx_sdio_suspend(struct device *dev)
         return ret;
     }
 }
-static int ssv6xxx_sdio_resume(struct device *dev)
+EXPORT_SYMBOL(ssv6xxx_sdio_suspend);
+int ssv6xxx_sdio_resume(struct device *dev)
 {
  struct sdio_func *func = dev_to_sdio_func(dev);
 #ifdef AML_WIFI_MAC
@@ -1504,6 +1551,7 @@ static int ssv6xxx_sdio_resume(struct device *dev)
     }
     return 0;
 }
+EXPORT_SYMBOL(ssv6xxx_sdio_resume);
 static const struct dev_pm_ops ssv6xxx_sdio_pm_ops =
 {
     .suspend = ssv6xxx_sdio_suspend,

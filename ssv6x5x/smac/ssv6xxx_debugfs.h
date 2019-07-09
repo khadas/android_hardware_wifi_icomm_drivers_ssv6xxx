@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -16,7 +15,7 @@
 
 #ifndef __SSV6XXX_DBGFS_H__
 #define __SSV6XXX_DBGFS_H__ 
-int ssv6xxx_init_debugfs (struct ssv_softc *sc, const char *name);
+int tu_ssv6xxx_init_debugfs (struct ssv_softc *sc, const char *name);
 void ssv6xxx_deinit_debugfs (struct ssv_softc *sc);
 int ssv6xxx_debugfs_remove_interface(struct ssv_softc *sc, struct ieee80211_vif *vif);
 int ssv6xxx_debugfs_add_interface(struct ssv_softc *sc, struct ieee80211_vif *vif);

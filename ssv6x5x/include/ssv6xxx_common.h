@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -16,6 +15,7 @@
 
 #ifndef __SSV6XXX_COMMON_H__
 #define __SSV6XXX_COMMON_H__ 
+#include <ssv_chip_id.h>
 #define SSV_RC_MAX_HARDWARE_SUPPORT 1
 #define RC_FIRMWARE_REPORT_FLAG 0x80
 #define FIRWARE_NOT_MATCH_CODE 0xF1F1F1F1
@@ -45,6 +45,8 @@
 #define LOG_HCI 0x0200
 #define LOG_HWIF 0x0400
 #define LOG_HAL 0x0800
+#define LOG_REGW 0x1000
+#define LOG_FLASH_BIN 0x2000
 #define MAX_AGGR_NUM (24)
 #define SSV62XX_TX_MAX_RATES 3
 struct fw_rc_retry_params {
@@ -59,7 +61,7 @@ struct fw_rc_retry_params {
 #define TXPB_OFFSET 80
 #define RXPB_OFFSET 80
 #define SSV6XXX_CHIP_ID_LENGTH (24)
-#define SSV6XXX_CHIP_ID_SHORT_LENGTH (9)
+#define SSV6XXX_CHIP_ID_SHORT_LENGTH (8)
 #define M0_TXREQ 0
 #define M1_TXREQ 1
 #define M2_TXREQ 2
@@ -114,7 +116,9 @@ typedef enum {
     SSV6XXX_HOST_CMD_WSID_OP = 7,
     SSV6XXX_HOST_CMD_SET_NOA = 8,
     SSV6XXX_HOST_CMD_TX_POLL = 9,
-    SSV6XXX_HOST_SOC_CMD_MAXID = 10,
+    SSV6XXX_HOST_CMD_SOFT_BEACON = 10,
+    SSV6XXX_HOST_CMD_MRX_MODE = 11,
+    SSV6XXX_HOST_SOC_CMD_MAXID = 12,
 } ssv6xxx_host_cmd_id;
 typedef struct cfg_host_event {
     u32 len :16;
@@ -142,7 +146,8 @@ typedef enum{
     SOC_EVT_SMART_ICOMM = 14,
     SOC_EVT_BEACON_LOSS = 15,
     SOC_EVT_TX_STUCK_RESP = 16,
-    SOC_EVT_MAXID = 17,
+    SOC_EVT_SW_BEACON_RESP = 17,
+    SOC_EVT_MAXID = 18,
 } ssv6xxx_soc_event;
 #ifdef CONFIG_P2P_NOA
 typedef enum {
@@ -198,6 +203,16 @@ enum SSV6XXX_TX_POLL_TYPE
     SSV6XXX_TX_POLL_RESET = 1,
     SSV6XXX_TX_POLL_STOP = 2
 };
+enum SSV6XXX_SOFT_BEACON_TYPE
+{
+    SSV6XXX_SOFT_BEACON_START = 0,
+    SSV6XXX_SOFT_BEACON_STOP = 1
+};
+enum SSV6XXX_MRX_MODE_TYPE
+{
+    SSV6XXX_MRX_NORMAL = 0,
+    SSV6XXX_MRX_PROMISCUOUS = 1
+};
 struct ssv6xxx_iqk_cfg {
     u32 cfg_xtal :8;
     u32 cfg_pa :8;
@@ -229,7 +244,7 @@ struct ssv6xxx_ch_cfg {
 #define MAX_RF_SETTING_TABLE_SIZE 512
 typedef enum {
     SSV6XXX_VOLT_DCDC_CONVERT = 0,
-    SSV6XXX_VOLT_LDO_CONVERT,
+    SSV6XXX_VOLT_LDO_CONVERT = 1,
 } ssv6xxx_cfg_volt;
 typedef enum {
     SSV6XXX_VOLT_33V = 0,
@@ -296,15 +311,7 @@ enum ssv_debug_skb_timestamp
  SKB_DURATION_STAGE_END
 };
 #endif
-#define SSV6051_CHIP "SSV6200A0"
-#define SSV6051_CHIP_ECO3 "RSV6200A0"
-#define SSV6006 "SSV6006A0"
-#define SSV6006MP "SSV6006C0"
-#define SSV6051Q_P1 0x00000000
-#define SSV6051Q_P2 0x70000000
-#define SSV6051Z 0x71000000
-#define SSV6051Q 0x73000000
-#define SSV6051P 0x75000000
+
 #define SSV_FIRMWARE_PATH_MAX 256
 #define SSV_FIRMWARE_MAX 32
 #ifdef CONFIG_SSV_SMARTLINK

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -1432,7 +1431,7 @@ void ssv6xxx_rc_hw_rate_idx(struct ssv_softc *sc,
     sr->crate_kbps = ssv_rc->rc_table[tx_rate[SSV_CRATE_IDX].count].rate_kbps;
     sr->crate_hw_idx = tx_rate[SSV_CRATE_IDX].count;
 }
-#ifdef RATE_CONTROL_REALTIME_UPDATA
+#ifdef RATE_CONTROL_REALTIME_UPDATE
 u8 ssv6xxx_rc_hw_rate_update_check(struct sk_buff *skb, struct ssv_softc *sc, u32 do_rts_cts)
 {
     int ret = 0;

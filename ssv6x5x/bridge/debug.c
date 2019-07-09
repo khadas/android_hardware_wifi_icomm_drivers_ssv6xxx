@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015 South Silicon Valley Microelectronics Inc.
- * Copyright (c) 2015 iComm Corporation
+ * Copyright (c) 2015 iComm-semi Ltd.
  *
  * This program is free software: you can redistribute it and/or modify 
  * it under the terms of the GNU General Public License as published by 
@@ -21,7 +20,7 @@
 #include "debug.h"
 int ssv_sdiobridge_init_debug(struct ssv_sdiobridge_glue *glue)
 {
- glue->debugfs = debugfs_create_dir("ssv",
+ glue->debugfs = debugfs_create_dir("tu_ssv",
          NULL);
  if (!glue->debugfs)
   return -ENOMEM;
